@@ -1,0 +1,24 @@
+[package]
+name = "kyc-registry"
+version = "0.1.0"
+description = "VaultProof KYC Registry - Poseidon Merkle tree for credential management"
+edition = "2021"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(feature, values("anchor-debug", "custom-heap", "custom-panic"))'] }
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "kyc_registry"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build"]
+
+[dependencies]
+anchor-lang = "0.32.1"
+solana-poseidon = "4.0.0"

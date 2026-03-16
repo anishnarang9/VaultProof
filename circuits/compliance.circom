@@ -19,7 +19,7 @@ include "elgamal_encrypt.circom";
 //   5. Balance solvency (balance >= transfer amount)
 //   6. ElGamal trapdoor encryption (metadata correctly encrypted to regulator key)
 //
-// treeDepth: Merkle tree depth (10 for 1024 credentials)
+// treeDepth: Merkle tree depth (20 for 1,048,576 credentials)
 // numMetadataFields: Number of Travel Rule metadata fields to encrypt (5)
 template VaultProofCompliance(treeDepth, numMetadataFields) {
 
@@ -58,17 +58,20 @@ template VaultProofCompliance(treeDepth, numMetadataFields) {
     signal input merkleRoot;
     signal input transferAmount;
     signal input currentTimestamp;
+    signal input retailThreshold;
+    signal input accreditedThreshold;
+    signal input institutionalThreshold;
+    signal input expiredThreshold;
     signal input regulatorPubKeyX;      // AMINA's Baby Jubjub ElGamal public key
     signal input regulatorPubKeyY;
+    signal input walletPubkey;
 
     // ElGamal ciphertext outputs: C1(x,y) + numMetadataFields * C2(x,y)
     signal input encryptedMetadata[2 + 2 * numMetadataFields];
 
-    // AMINA Bank's EdDSA public key (issuer) — hardcoded as circuit constants
-    // In production, these would be embedded constants. For the hackathon demo,
-    // we pass them as public inputs so we can test with different keys.
-    signal input issuerPubKeyX;
-    signal input issuerPubKeyY;
+    // AMINA Bank's EdDSA public key is hardcoded for the single-issuer model.
+    var issuerPubKeyX = 13277427435165878497778222415993513565335242147425444199013288855685581939618;
+    var issuerPubKeyY = 13622229784656158136036771217484571176836296686641868549125388198837476602820;
 
     // ================================================================
     // STAGE 1: CREDENTIAL INTEGRITY
@@ -108,10 +111,11 @@ template VaultProofCompliance(treeDepth, numMetadataFields) {
     // ================================================================
     // STAGE 2: MERKLE MEMBERSHIP
     // ================================================================
-    // Compute the leaf: Poseidon(credHashFinal, identitySecret)
-    component leafHasher = Poseidon(2);
+    // Compute the credential leaf with wallet binding.
+    component leafHasher = Poseidon(3);
     leafHasher.inputs[0] <== credHashFinal.out;
     leafHasher.inputs[1] <== identitySecret;
+    leafHasher.inputs[2] <== walletPubkey;
 
     // Verify Merkle proof from leaf to root
     component merkleVerifier = MerkleTreeVerifier(treeDepth);
@@ -129,6 +133,10 @@ template VaultProofCompliance(treeDepth, numMetadataFields) {
     threshold.accreditationStatus <== accreditationStatus;
     threshold.credentialExpiry <== credentialExpiry;
     threshold.currentTimestamp <== currentTimestamp;
+    threshold.retailThreshold <== retailThreshold;
+    threshold.accreditedThreshold <== accreditedThreshold;
+    threshold.institutionalThreshold <== institutionalThreshold;
+    threshold.expiredThreshold <== expiredThreshold;
 
     // ================================================================
     // STAGE 5: COMPLIANCE CHECKS
@@ -174,14 +182,17 @@ template VaultProofCompliance(treeDepth, numMetadataFields) {
 }
 
 // Main circuit instantiation:
-// treeDepth = 10 (1024 credentials), numMetadataFields = 5
+// treeDepth = 20 (1,048,576 credentials), numMetadataFields = 5
 component main {public [
     merkleRoot,
     transferAmount,
     currentTimestamp,
+    retailThreshold,
+    accreditedThreshold,
+    institutionalThreshold,
+    expiredThreshold,
     regulatorPubKeyX,
     regulatorPubKeyY,
-    encryptedMetadata,
-    issuerPubKeyX,
-    issuerPubKeyY
-]} = VaultProofCompliance(10, 5);
+    walletPubkey,
+    encryptedMetadata
+]} = VaultProofCompliance(20, 5);

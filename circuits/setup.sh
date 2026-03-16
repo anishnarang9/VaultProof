@@ -15,7 +15,9 @@ set -e
 
 CIRCUIT_NAME="compliance"
 BUILD_DIR="build"
-PTAU_FILE="pot16.ptau"
+PTAU_NEW="pot16_0000.ptau"
+PTAU_CONTRIBUTED="pot16_0001.ptau"
+PTAU_FILE="pot16_final.ptau"
 PTAU_POWER=16  # 2^16 = 65536 constraints max (circuit is ~26k)
 
 SNARKJS="npx snarkjs"
@@ -44,53 +46,49 @@ echo ""
 echo "[INFO] Circuit statistics:"
 $SNARKJS r1cs info ${BUILD_DIR}/${CIRCUIT_NAME}.r1cs
 
-# Step 2: Download Powers of Tau (if not present)
+# Step 2: Generate Powers of Tau
 echo ""
-echo "[2/6] Checking Powers of Tau file..."
-if [ ! -f "${BUILD_DIR}/${PTAU_FILE}" ]; then
-    echo "Downloading powersOfTau28_hez_final_${PTAU_POWER}.ptau..."
-    echo "(This is a ~70MB download from Hermez trusted setup ceremony)"
-    curl -L -o ${BUILD_DIR}/${PTAU_FILE} \
-        "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_${PTAU_POWER}.ptau"
-    echo "Download complete."
-else
-    echo "Powers of Tau file already exists. Skipping download."
-fi
+echo "[2/6] Generating Powers of Tau..."
+$SNARKJS powersoftau new bn128 ${PTAU_POWER} ${BUILD_DIR}/${PTAU_NEW} -v
 
-# Step 3: Circuit-specific Phase 2 setup (Groth16)
+# Step 3: Contribute to and prepare phase 2
 echo ""
-echo "[3/6] Starting circuit-specific Phase 2 setup..."
+echo "[3/6] Contributing to and preparing phase 2..."
+$SNARKJS powersoftau contribute \
+    ${BUILD_DIR}/${PTAU_NEW} \
+    ${BUILD_DIR}/${PTAU_CONTRIBUTED} \
+    --name="agent1" \
+    -e="vaultproof-stablehacks-2026-random-entropy-$(date +%s)"
+$SNARKJS powersoftau prepare phase2 \
+    ${BUILD_DIR}/${PTAU_CONTRIBUTED} \
+    ${BUILD_DIR}/${PTAU_FILE}
+
+# Step 4: Circuit-specific Phase 2 setup (Groth16)
+echo ""
+echo "[4/6] Starting circuit-specific Groth16 setup..."
 $SNARKJS groth16 setup \
     ${BUILD_DIR}/${CIRCUIT_NAME}.r1cs \
     ${BUILD_DIR}/${PTAU_FILE} \
     ${BUILD_DIR}/${CIRCUIT_NAME}_0000.zkey
 
-# Step 4: Contribute to Phase 2 (add entropy)
+# Step 5: Contribute to circuit-specific setup (add entropy)
 echo ""
-echo "[4/6] Contributing to Phase 2 ceremony..."
+echo "[5/6] Contributing to circuit-specific ceremony..."
 $SNARKJS zkey contribute \
     ${BUILD_DIR}/${CIRCUIT_NAME}_0000.zkey \
     ${BUILD_DIR}/${CIRCUIT_NAME}_final.zkey \
-    --name="VaultProof hackathon contribution" \
+    --name="agent1" \
     -v \
     -e="vaultproof-stablehacks-2026-random-entropy-$(date +%s)"
 
-# Step 5: Export verification key (JSON, for off-chain verification)
+# Step 6: Export verification key (JSON, for off-chain verification)
 echo ""
-echo "[5/6] Exporting verification key..."
+echo "[6/6] Exporting verification key..."
 $SNARKJS zkey export verificationkey \
     ${BUILD_DIR}/${CIRCUIT_NAME}_final.zkey \
     ${BUILD_DIR}/verification_key.json
 
 echo "Verification key exported."
-
-# Step 6: Export Solana verifier (optional — for on-chain integration later)
-echo ""
-echo "[6/6] Exporting Solidity verifier (reference)..."
-$SNARKJS zkey export solidityverifier \
-    ${BUILD_DIR}/${CIRCUIT_NAME}_final.zkey \
-    ${BUILD_DIR}/verifier.sol \
-    2>/dev/null || echo "  (Solidity export skipped — not needed for Solana)"
 
 echo ""
 echo "============================================"
@@ -104,4 +102,4 @@ echo "  ${BUILD_DIR}/${CIRCUIT_NAME}.sym            - Debug symbols"
 echo "  ${BUILD_DIR}/${CIRCUIT_NAME}_final.zkey     - Proving key"
 echo "  ${BUILD_DIR}/verification_key.json          - Verification key"
 echo ""
-echo "Next: Run 'node test_circuit.js' to generate and verify a proof."
+echo "Next: Run 'node export_vk_solana.mjs verification_key.json > ../programs/vusd-vault/src/keys/verifying_key.rs'"

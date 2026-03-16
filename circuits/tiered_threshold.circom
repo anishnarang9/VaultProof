@@ -14,14 +14,14 @@ template TieredThreshold() {
     signal input accreditationStatus;   // 0, 1, or 2
     signal input credentialExpiry;      // unix timestamp
     signal input currentTimestamp;      // unix timestamp (public)
+    signal input retailThreshold;
+    signal input accreditedThreshold;
+    signal input institutionalThreshold;
+    signal input expiredThreshold;
 
     signal output effectiveThreshold;
 
     // --- Tier selection ---
-    var RETAIL_THRESHOLD = 10000000000;              // $10,000
-    var ACCREDITED_THRESHOLD = 1000000000000;        // $1,000,000
-    var INSTITUTIONAL_THRESHOLD = 18446744073709551615; // max u64
-
     component isAccredited = IsEqual();
     isAccredited.in[0] <== accreditationStatus;
     isAccredited.in[1] <== 1;
@@ -30,21 +30,28 @@ template TieredThreshold() {
     isInstitutional.in[0] <== accreditationStatus;
     isInstitutional.in[1] <== 2;
 
+    signal accreditedDelta;
+    signal institutionalDelta;
+    signal accreditedContribution;
+    signal institutionalContribution;
     signal tierThreshold;
-    tierThreshold <== RETAIL_THRESHOLD
-        + isAccredited.out * (ACCREDITED_THRESHOLD - RETAIL_THRESHOLD)
-        + isInstitutional.out * (INSTITUTIONAL_THRESHOLD - ACCREDITED_THRESHOLD);
-
-    // --- Soft expiry check ---
-    var EXPIRED_THRESHOLD = 1000000000; // $1,000
+    accreditedDelta <== accreditedThreshold - retailThreshold;
+    institutionalDelta <== institutionalThreshold - accreditedThreshold;
+    accreditedContribution <== isAccredited.out * accreditedDelta;
+    institutionalContribution <== isInstitutional.out * institutionalDelta;
+    tierThreshold <== retailThreshold + accreditedContribution + institutionalContribution;
 
     component isExpired = LessThan(64);
     isExpired.in[0] <== credentialExpiry;
     isExpired.in[1] <== currentTimestamp;
     // isExpired.out = 1 if credentialExpiry < currentTimestamp (expired)
 
+    signal expiredDelta;
+    signal expiredContribution;
     // If expired, override to EXPIRED_THRESHOLD; otherwise use tierThreshold
     // effectiveThreshold = tierThreshold + isExpired * (EXPIRED_THRESHOLD - tierThreshold)
     //                    = tierThreshold * (1 - isExpired) + EXPIRED_THRESHOLD * isExpired
-    effectiveThreshold <== tierThreshold + isExpired.out * (EXPIRED_THRESHOLD - tierThreshold);
+    expiredDelta <== expiredThreshold - tierThreshold;
+    expiredContribution <== isExpired.out * expiredDelta;
+    effectiveThreshold <== tierThreshold + expiredContribution;
 }

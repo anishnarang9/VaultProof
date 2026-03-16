@@ -1,0 +1,24 @@
+[package]
+name = "compliance-admin"
+version = "0.1.0"
+description = "VaultProof Compliance Admin - Decryption authorization and AML threshold management"
+edition = "2021"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(feature, values("anchor-debug", "custom-heap", "custom-panic"))'] }
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "compliance_admin"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build", "vusd-vault/idl-build"]
+
+[dependencies]
+anchor-lang = "0.32.1"
+vusd-vault = { path = "../vusd-vault", features = ["cpi"] }

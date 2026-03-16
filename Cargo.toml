@@ -1,0 +1,20 @@
+[workspace]
+members = [
+    "programs/*"
+]
+resolver = "2"
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
+
+[profile.release.build-override]
+opt-level = 3
+incremental = false
+codegen-units = 1
+
+# Pin blake3 to avoid constant_time_eq 0.4.x (requires edition2024, not supported by platform-tools v1.51)
+[workspace.dependencies]
+blake3 = "=1.6.1"
+

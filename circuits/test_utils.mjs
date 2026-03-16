@@ -15,8 +15,10 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const TREE_DEPTH = 10;
-export const MAX_LEAVES = 1 << TREE_DEPTH; // 1024
+export const TREE_DEPTH = 20;
+export const MAX_LEAVES = 1 << TREE_DEPTH;
+export const BN254_FIELD =
+    21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 export const WASM_PATH = path.join(__dirname, "build", "compliance_js", "compliance.wasm");
 export const ZKEY_PATH = path.join(__dirname, "build", "compliance_final.zkey");
@@ -107,13 +109,16 @@ export function createCredential(crypto_ctx, issuer, fields, identitySecret) {
     // Sign with issuer's key
     const signature = eddsa.signPoseidon(issuer.privKey, credHashFinal);
 
-    // Compute leaf = Poseidon(credHashFinal, identitySecret)
-    const leaf = poseidon([credHashFinalBigInt, identitySecret]);
+    const walletPubkey = fields.walletPubkey ?? 0n;
+
+    // Compute leaf = Poseidon(credHashFinal, identitySecret, walletPubkey)
+    const leaf = poseidon([credHashFinalBigInt, identitySecret, walletPubkey]);
     const leafBigInt = F.toObject(leaf);
 
     return {
         ...fields,
         identitySecret,
+        walletPubkey,
         credHashFinalBigInt,
         signature,
         sigR8x: F.toObject(signature.R8[0]),
@@ -129,48 +134,33 @@ export function createCredential(crypto_ctx, issuer, fields, identitySecret) {
  */
 export function buildMerkleTree(crypto_ctx, leafValues) {
     const { poseidon, F } = crypto_ctx;
-    const emptyLeaf = F.toObject(poseidon([0n]));
-
-    const leaves = new Array(MAX_LEAVES).fill(emptyLeaf);
-    for (let i = 0; i < leafValues.length; i++) {
-        leaves[i] = leafValues[i];
+    const emptyNodes = [F.toObject(poseidon([0n]))];
+    for (let level = 1; level < TREE_DEPTH; level++) {
+        emptyNodes.push(F.toObject(poseidon([emptyNodes[level - 1], emptyNodes[level - 1]])));
     }
 
-    let currentLevel = leaves.slice();
-    const treeLevels = [currentLevel.slice()];
+    const treeLevels = leafValues.map((leaf) => {
+        let current = leaf;
+        const pathElements = [];
+        const pathIndices = [];
 
-    for (let level = 0; level < TREE_DEPTH; level++) {
-        const nextLevel = [];
-        for (let i = 0; i < currentLevel.length; i += 2) {
-            const parent = F.toObject(poseidon([currentLevel[i], currentLevel[i + 1]]));
-            nextLevel.push(parent);
+        for (let level = 0; level < TREE_DEPTH; level++) {
+            pathElements.push(emptyNodes[level]);
+            pathIndices.push(0);
+            current = F.toObject(poseidon([current, emptyNodes[level]]));
         }
-        currentLevel = nextLevel;
-        treeLevels.push(currentLevel.slice());
-    }
 
-    return { root: currentLevel[0], treeLevels, emptyLeaf };
+        return { root: current, pathElements, pathIndices };
+    });
+
+    return { root: treeLevels[0]?.root ?? emptyNodes[TREE_DEPTH - 1], treeLevels, emptyLeaf: emptyNodes[0] };
 }
 
 /**
  * Generate a Merkle proof for a leaf at a given index.
  */
 export function getMerkleProof(treeLevels, leafIndex) {
-    const pathElements = [];
-    const pathIndices = [];
-    let nodeIndex = leafIndex;
-
-    for (let level = 0; level < TREE_DEPTH; level++) {
-        const isLeft = nodeIndex % 2 === 0;
-        const siblingIndex = isLeft ? nodeIndex + 1 : nodeIndex - 1;
-
-        pathElements.push(treeLevels[level][siblingIndex]);
-        pathIndices.push(isLeft ? 0 : 1);
-
-        nodeIndex = Math.floor(nodeIndex / 2);
-    }
-
-    return { pathElements, pathIndices };
+    return treeLevels[leafIndex];
 }
 
 /**
@@ -230,11 +220,14 @@ export function buildCircuitInput(opts) {
         merkleRoot,
         transferAmount,
         currentTimestamp,
+        retailThreshold = usd(10000),
+        accreditedThreshold = usd(1000000),
+        institutionalThreshold = (2n ** 64n) - 1n,
+        expiredThreshold = usd(1000),
         balance,
         recipientAddress,
         elgamalRandomness,
         regulatorKeypair,
-        issuer,
         encryptedMetadata,
     } = opts;
 
@@ -264,12 +257,14 @@ export function buildCircuitInput(opts) {
         merkleRoot: merkleRoot.toString(),
         transferAmount: transferAmount.toString(),
         currentTimestamp: currentTimestamp.toString(),
+        retailThreshold: retailThreshold.toString(),
+        accreditedThreshold: accreditedThreshold.toString(),
+        institutionalThreshold: institutionalThreshold.toString(),
+        expiredThreshold: expiredThreshold.toString(),
         regulatorPubKeyX: regulatorKeypair.pubKeyX.toString(),
         regulatorPubKeyY: regulatorKeypair.pubKeyY.toString(),
+        walletPubkey: credential.walletPubkey.toString(),
         encryptedMetadata: encryptedMetadata.map((e) => e.toString()),
-
-        issuerPubKeyX: issuer.pubKeyX.toString(),
-        issuerPubKeyY: issuer.pubKeyY.toString(),
     };
 }
 
@@ -320,6 +315,12 @@ export function buildScenario(crypto_ctx, opts) {
         currentTimestamp,
         recipientAddress,
         elgamalRandomness,
+        thresholds = {
+            retail: usd(10000),
+            accredited: usd(1000000),
+            institutional: (2n ** 64n) - 1n,
+            expired: usd(1000),
+        },
         // Overrides for testing invalid scenarios
         overrideMerkleRoot,
         overrideMerkleProof,
@@ -342,11 +343,14 @@ export function buildScenario(crypto_ctx, opts) {
         merkleRoot,
         transferAmount,
         currentTimestamp,
+        retailThreshold: thresholds.retail,
+        accreditedThreshold: thresholds.accredited,
+        institutionalThreshold: thresholds.institutional,
+        expiredThreshold: thresholds.expired,
         balance,
         recipientAddress,
         elgamalRandomness,
         regulatorKeypair,
-        issuer,
         encryptedMetadata: overrideEncrypted || encrypted,
     });
 

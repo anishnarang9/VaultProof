@@ -1,0 +1,1520 @@
+use anchor_lang::prelude::*;
+#[cfg(feature = "idl-build")]
+use anchor_lang::{Discriminator, IdlBuild};
+use anchor_spl::token_interface::{
+    self, Burn, Mint, MintTo, TokenAccount, TokenInterface, TransferChecked,
+};
+use groth16_solana::groth16::Groth16Verifier;
+use solana_sha256_hasher::hashv;
+
+pub mod keys;
+use keys::verifying_key::{get_verifying_key, NR_PUBLIC_INPUTS};
+
+declare_id!("CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu");
+
+pub const NUM_PUBLIC_INPUTS: usize = NR_PUBLIC_INPUTS;
+pub const ENCRYPTED_METADATA_START_INDEX: usize = 10;
+pub const ENCRYPTED_METADATA_PUBLIC_INPUTS: usize =
+    NUM_PUBLIC_INPUTS - ENCRYPTED_METADATA_START_INDEX;
+pub const ENCRYPTED_METADATA_BYTES: usize = ENCRYPTED_METADATA_PUBLIC_INPUTS * 32;
+
+pub const DEFAULT_RETAIL_THRESHOLD: u64 = 10_000_000_000;
+pub const DEFAULT_ACCREDITED_THRESHOLD: u64 = 1_000_000_000_000;
+pub const DEFAULT_INSTITUTIONAL_THRESHOLD: u64 = u64::MAX;
+pub const DEFAULT_EXPIRED_THRESHOLD: u64 = 1_000_000_000;
+
+pub const DEFAULT_TIMELOCK: i64 = 259_200;
+pub const USDC_DECIMALS: u8 = 6;
+
+fn compute_proof_hash(proof_a: &[u8; 64], proof_b: &[u8; 128], proof_c: &[u8; 64]) -> [u8; 32] {
+    hashv(&[proof_a.as_slice(), proof_b.as_slice(), proof_c.as_slice()]).to_bytes()
+}
+
+fn negate_proof_a(proof_a: &[u8; 64]) -> [u8; 64] {
+    let field_prime: [u8; 32] = [
+        0x30, 0x64, 0x4e, 0x72, 0xe1, 0x31, 0xa0, 0x29, 0xb8, 0x50, 0x45, 0xb6, 0x81, 0x81, 0x58,
+        0x5d, 0x97, 0x81, 0x6a, 0x91, 0x68, 0x71, 0xca, 0x8d, 0x3c, 0x20, 0x8c, 0x16, 0xd8, 0x7c,
+        0xfd, 0x47,
+    ];
+
+    let mut result = [0u8; 64];
+    result[..32].copy_from_slice(&proof_a[..32]);
+
+    let y = &proof_a[32..64];
+    if y.iter().all(|&byte| byte == 0) {
+        result[32..64].copy_from_slice(y);
+        return result;
+    }
+
+    let mut borrow: u16 = 0;
+    for index in (0..32).rev() {
+        let diff = (field_prime[index] as u16)
+            .wrapping_sub(y[index] as u16)
+            .wrapping_sub(borrow);
+        if diff > 255 {
+            result[32 + index] = diff.wrapping_add(256) as u8;
+            borrow = 1;
+        } else {
+            result[32 + index] = diff as u8;
+            borrow = 0;
+        }
+    }
+
+    result
+}
+
+fn verify_proof(
+    proof_a: &[u8; 64],
+    proof_b: &[u8; 128],
+    proof_c: &[u8; 64],
+    public_inputs: &[[u8; 32]; NUM_PUBLIC_INPUTS],
+) -> Result<()> {
+    let negated_a = negate_proof_a(proof_a);
+    let vk = get_verifying_key();
+
+    let mut verifier = Groth16Verifier::new(&negated_a, proof_b, proof_c, public_inputs, &vk)
+        .map_err(|_| error!(VaultError::InvalidProofFormat))?;
+
+    verifier
+        .verify()
+        .map_err(|_| error!(VaultError::ProofVerificationFailed))?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+fn u64_to_field_bytes(value: u64) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    bytes[24..].copy_from_slice(&value.to_be_bytes());
+    bytes
+}
+
+#[cfg(test)]
+fn i64_to_field_bytes(value: i64) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    bytes[24..].copy_from_slice(&value.to_be_bytes());
+    bytes
+}
+
+fn field_bytes_to_u64(bytes: &[u8; 32]) -> u64 {
+    let mut tail = [0u8; 8];
+    tail.copy_from_slice(&bytes[24..]);
+    u64::from_be_bytes(tail)
+}
+
+fn field_bytes_to_i64(bytes: &[u8; 32]) -> i64 {
+    let mut tail = [0u8; 8];
+    tail.copy_from_slice(&bytes[24..]);
+    i64::from_be_bytes(tail)
+}
+
+fn solana_pubkey_to_field_bytes(pubkey: &Pubkey) -> [u8; 32] {
+    pubkey.to_bytes()
+}
+
+fn encrypted_metadata_from_public_inputs(public_inputs: &[[u8; 32]; NUM_PUBLIC_INPUTS]) -> Vec<u8> {
+    let mut encrypted_metadata = Vec::with_capacity(ENCRYPTED_METADATA_BYTES);
+    for input in public_inputs.iter().skip(ENCRYPTED_METADATA_START_INDEX) {
+        encrypted_metadata.extend_from_slice(input);
+    }
+    encrypted_metadata
+}
+
+fn validate_all_public_inputs(
+    public_inputs: &[[u8; 32]; NUM_PUBLIC_INPUTS],
+    registry_root: [u8; 32],
+    amount: u64,
+    clock_timestamp: i64,
+    vault: &VaultState,
+    signer: &Pubkey,
+    encrypted_metadata: &[u8],
+) -> Result<()> {
+    require!(
+        public_inputs[0] == registry_root,
+        VaultError::MerkleRootMismatch
+    );
+    require!(
+        field_bytes_to_u64(&public_inputs[1]) == amount,
+        VaultError::AmountMismatch
+    );
+
+    let proof_timestamp = field_bytes_to_i64(&public_inputs[2]);
+    require!(
+        (clock_timestamp - proof_timestamp).abs() <= 60,
+        VaultError::StaleProof
+    );
+
+    require!(
+        field_bytes_to_u64(&public_inputs[3]) == vault.aml_thresholds[0]
+            && field_bytes_to_u64(&public_inputs[4]) == vault.aml_thresholds[1]
+            && field_bytes_to_u64(&public_inputs[5]) == vault.aml_thresholds[2]
+            && field_bytes_to_u64(&public_inputs[6]) == vault.expired_threshold,
+        VaultError::ThresholdMismatch
+    );
+    require!(
+        public_inputs[7] == vault.regulator_pubkey_x
+            && public_inputs[8] == vault.regulator_pubkey_y,
+        VaultError::RegulatorKeyMismatch
+    );
+    require!(
+        public_inputs[9] == solana_pubkey_to_field_bytes(signer),
+        VaultError::WalletBindingMismatch
+    );
+
+    require!(
+        encrypted_metadata.len() == ENCRYPTED_METADATA_BYTES,
+        VaultError::EncryptedMetadataLengthMismatch
+    );
+
+    for (index, chunk) in encrypted_metadata.chunks_exact(32).enumerate() {
+        require!(
+            public_inputs[ENCRYPTED_METADATA_START_INDEX + index] == chunk,
+            VaultError::EncryptedMetadataMismatch
+        );
+    }
+
+    Ok(())
+}
+
+fn calculate_deposit_shares(total_assets: u64, total_shares: u64, assets_in: u64) -> Result<u64> {
+    require!(assets_in > 0, VaultError::ZeroAmount);
+    if total_assets == 0 || total_shares == 0 {
+        return Ok(assets_in);
+    }
+
+    let shares = ((assets_in as u128) * (total_shares as u128) / (total_assets as u128)) as u64;
+    require!(shares > 0, VaultError::ZeroShares);
+    Ok(shares)
+}
+
+fn calculate_withdrawal_assets(total_assets: u64, total_shares: u64, shares: u64) -> Result<u64> {
+    require!(shares > 0, VaultError::ZeroShares);
+    require!(total_shares > 0, VaultError::ZeroShares);
+
+    let assets = ((shares as u128) * (total_assets as u128) / (total_shares as u128)) as u64;
+    require!(assets > 0, VaultError::ZeroAmount);
+    Ok(assets)
+}
+
+fn update_share_price(total_assets: u64, total_shares: u64) -> Result<(u64, u64)> {
+    if total_shares == 0 {
+        return Ok((1, 1));
+    }
+    Ok((total_assets, total_shares))
+}
+
+fn refresh_share_price(vault: &mut VaultState) -> Result<()> {
+    let (numerator, denominator) = update_share_price(vault.total_assets, vault.total_shares)?;
+    vault.share_price_numerator = numerator;
+    vault.share_price_denominator = denominator;
+    Ok(())
+}
+
+fn authorize_transfer_record_decryption(record: &mut TransferRecord) -> Result<()> {
+    record.decryption_authorized = true;
+    Ok(())
+}
+
+fn populate_transfer_record(
+    record: &mut TransferRecord,
+    transfer_type: TransferType,
+    amount: u64,
+    merkle_root_snapshot: [u8; 32],
+    proof_hash: [u8; 32],
+    encrypted_metadata: Vec<u8>,
+    signer: Pubkey,
+    bump: u8,
+) -> Result<()> {
+    record.proof_hash = proof_hash;
+    record.transfer_type = transfer_type;
+    record.amount = amount;
+    record.timestamp = Clock::get()?.unix_timestamp;
+    record.merkle_root_snapshot = merkle_root_snapshot;
+    record.encrypted_metadata = encrypted_metadata;
+    record.decryption_authorized = false;
+    record.signer = signer;
+    record.bump = bump;
+    Ok(())
+}
+
+#[program]
+pub mod vusd_vault {
+    use super::*;
+
+    pub fn initialize_vault(
+        ctx: Context<InitVault>,
+        regulator_pub_key_x: [u8; 32],
+        regulator_pub_key_y: [u8; 32],
+    ) -> Result<()> {
+        let vault = &mut ctx.accounts.vault_state;
+        vault.authority = ctx.accounts.authority.key();
+        vault.usdc_mint = ctx.accounts.usdc_mint.key();
+        vault.share_mint = ctx.accounts.share_mint.key();
+        vault.usdc_reserve = ctx.accounts.usdc_reserve.key();
+        vault.total_assets = 0;
+        vault.total_shares = 0;
+        vault.share_price_numerator = 1;
+        vault.share_price_denominator = 1;
+        vault.yield_source = Pubkey::default();
+        vault.liquid_buffer_bps = 0;
+        vault.total_yield_earned = 0;
+        vault.aml_thresholds = [
+            DEFAULT_RETAIL_THRESHOLD,
+            DEFAULT_ACCREDITED_THRESHOLD,
+            DEFAULT_INSTITUTIONAL_THRESHOLD,
+        ];
+        vault.expired_threshold = DEFAULT_EXPIRED_THRESHOLD;
+        vault.emergency_timelock = DEFAULT_TIMELOCK;
+        vault.regulator_pubkey_x = regulator_pub_key_x;
+        vault.regulator_pubkey_y = regulator_pub_key_y;
+        vault.bump = ctx.bumps.vault_state;
+        vault.reserve_bump = ctx.bumps.usdc_reserve;
+
+        Ok(())
+    }
+
+    pub fn store_proof_data(
+        ctx: Context<StoreProofData>,
+        proof_a: [u8; 64],
+        proof_b: [u8; 128],
+        proof_c: [u8; 64],
+        public_inputs: [[u8; 32]; NUM_PUBLIC_INPUTS],
+    ) -> Result<()> {
+        let buffer = &mut ctx.accounts.proof_buffer;
+        buffer.owner = ctx.accounts.payer.key();
+        buffer.proof_hash = compute_proof_hash(&proof_a, &proof_b, &proof_c);
+        buffer.proof_a = proof_a;
+        buffer.proof_b = proof_b;
+        buffer.proof_c = proof_c;
+        buffer.public_inputs = public_inputs;
+        buffer.bump = ctx.bumps.proof_buffer;
+        Ok(())
+    }
+
+    pub fn deposit_with_proof(ctx: Context<DepositWithProof>, amount: u64) -> Result<()> {
+        let buffer = &ctx.accounts.proof_buffer;
+        verify_proof(
+            &buffer.proof_a,
+            &buffer.proof_b,
+            &buffer.proof_c,
+            &buffer.public_inputs,
+        )?;
+
+        let registry_root = ctx.accounts.kyc_registry.merkle_root;
+        let encrypted_metadata = encrypted_metadata_from_public_inputs(&buffer.public_inputs);
+        validate_all_public_inputs(
+            &buffer.public_inputs,
+            registry_root,
+            amount,
+            Clock::get()?.unix_timestamp,
+            &ctx.accounts.vault_state,
+            &ctx.accounts.user.key(),
+            &encrypted_metadata,
+        )?;
+
+        let shares_to_mint = calculate_deposit_shares(
+            ctx.accounts.vault_state.total_assets,
+            ctx.accounts.vault_state.total_shares,
+            amount,
+        )?;
+
+        let transfer_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.user_usdc_account.to_account_info(),
+                to: ctx.accounts.usdc_reserve.to_account_info(),
+                authority: ctx.accounts.user.to_account_info(),
+                mint: ctx.accounts.usdc_mint.to_account_info(),
+            },
+        );
+        token_interface::transfer_checked(transfer_ctx, amount, USDC_DECIMALS)?;
+
+        let vault_seeds = &[b"vault_state".as_ref(), &[ctx.accounts.vault_state.bump]];
+        let signer_seeds = &[&vault_seeds[..]];
+        let mint_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            MintTo {
+                mint: ctx.accounts.share_mint.to_account_info(),
+                to: ctx.accounts.stealth_share_account.to_account_info(),
+                authority: ctx.accounts.vault_state.to_account_info(),
+            },
+            signer_seeds,
+        );
+        token_interface::mint_to(mint_ctx, shares_to_mint)?;
+
+        let vault = &mut ctx.accounts.vault_state;
+        vault.total_assets = vault
+            .total_assets
+            .checked_add(amount)
+            .ok_or(VaultError::Overflow)?;
+        vault.total_shares = vault
+            .total_shares
+            .checked_add(shares_to_mint)
+            .ok_or(VaultError::Overflow)?;
+        refresh_share_price(vault)?;
+
+        populate_transfer_record(
+            &mut ctx.accounts.transfer_record,
+            TransferType::Deposit,
+            amount,
+            registry_root,
+            buffer.proof_hash,
+            encrypted_metadata,
+            ctx.accounts.user.key(),
+            ctx.bumps.transfer_record,
+        )?;
+
+        emit!(DepositVerified {
+            amount,
+            shares: shares_to_mint,
+            proof_hash: buffer.proof_hash,
+            timestamp: ctx.accounts.transfer_record.timestamp,
+        });
+
+        Ok(())
+    }
+
+    pub fn transfer_with_proof(ctx: Context<TransferWithProof>, amount: u64) -> Result<()> {
+        let buffer = &ctx.accounts.proof_buffer;
+        verify_proof(
+            &buffer.proof_a,
+            &buffer.proof_b,
+            &buffer.proof_c,
+            &buffer.public_inputs,
+        )?;
+
+        let registry_root = ctx.accounts.kyc_registry.merkle_root;
+        let encrypted_metadata = encrypted_metadata_from_public_inputs(&buffer.public_inputs);
+        validate_all_public_inputs(
+            &buffer.public_inputs,
+            registry_root,
+            amount,
+            Clock::get()?.unix_timestamp,
+            &ctx.accounts.vault_state,
+            &ctx.accounts.sender.key(),
+            &encrypted_metadata,
+        )?;
+
+        let transfer_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.sender_stealth_account.to_account_info(),
+                to: ctx.accounts.recipient_stealth_account.to_account_info(),
+                authority: ctx.accounts.sender.to_account_info(),
+                mint: ctx.accounts.share_mint.to_account_info(),
+            },
+        );
+        token_interface::transfer_checked(transfer_ctx, amount, USDC_DECIMALS)?;
+
+        populate_transfer_record(
+            &mut ctx.accounts.transfer_record,
+            TransferType::Transfer,
+            amount,
+            registry_root,
+            buffer.proof_hash,
+            encrypted_metadata,
+            ctx.accounts.sender.key(),
+            ctx.bumps.transfer_record,
+        )?;
+
+        emit!(TransferVerified {
+            amount,
+            proof_hash: buffer.proof_hash,
+            timestamp: ctx.accounts.transfer_record.timestamp,
+        });
+
+        Ok(())
+    }
+
+    pub fn withdraw_with_proof(ctx: Context<WithdrawWithProof>, amount: u64) -> Result<()> {
+        let buffer = &ctx.accounts.proof_buffer;
+        verify_proof(
+            &buffer.proof_a,
+            &buffer.proof_b,
+            &buffer.proof_c,
+            &buffer.public_inputs,
+        )?;
+
+        let registry_root = ctx.accounts.kyc_registry.merkle_root;
+        let encrypted_metadata = encrypted_metadata_from_public_inputs(&buffer.public_inputs);
+        validate_all_public_inputs(
+            &buffer.public_inputs,
+            registry_root,
+            amount,
+            Clock::get()?.unix_timestamp,
+            &ctx.accounts.vault_state,
+            &ctx.accounts.stealth_owner.key(),
+            &encrypted_metadata,
+        )?;
+
+        let usdc_out = calculate_withdrawal_assets(
+            ctx.accounts.vault_state.total_assets,
+            ctx.accounts.vault_state.total_shares,
+            amount,
+        )?;
+
+        let burn_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            Burn {
+                mint: ctx.accounts.share_mint.to_account_info(),
+                from: ctx.accounts.stealth_share_account.to_account_info(),
+                authority: ctx.accounts.stealth_owner.to_account_info(),
+            },
+        );
+        token_interface::burn(burn_ctx, amount)?;
+
+        let reserve_seeds = &[
+            b"usdc_reserve".as_ref(),
+            &[ctx.accounts.vault_state.reserve_bump],
+        ];
+        let reserve_signer = &[&reserve_seeds[..]];
+        let transfer_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.usdc_reserve.to_account_info(),
+                to: ctx.accounts.user_usdc_account.to_account_info(),
+                authority: ctx.accounts.usdc_reserve.to_account_info(),
+                mint: ctx.accounts.usdc_mint.to_account_info(),
+            },
+            reserve_signer,
+        );
+        token_interface::transfer_checked(transfer_ctx, usdc_out, USDC_DECIMALS)?;
+
+        let vault = &mut ctx.accounts.vault_state;
+        vault.total_assets = vault
+            .total_assets
+            .checked_sub(usdc_out)
+            .ok_or(VaultError::Underflow)?;
+        vault.total_shares = vault
+            .total_shares
+            .checked_sub(amount)
+            .ok_or(VaultError::Underflow)?;
+        refresh_share_price(vault)?;
+
+        populate_transfer_record(
+            &mut ctx.accounts.transfer_record,
+            TransferType::Withdrawal,
+            amount,
+            registry_root,
+            buffer.proof_hash,
+            encrypted_metadata,
+            ctx.accounts.stealth_owner.key(),
+            ctx.bumps.transfer_record,
+        )?;
+
+        emit!(WithdrawalVerified {
+            shares: amount,
+            assets_out: usdc_out,
+            proof_hash: buffer.proof_hash,
+            timestamp: ctx.accounts.transfer_record.timestamp,
+        });
+
+        Ok(())
+    }
+
+    pub fn request_emergency_withdrawal(ctx: Context<RequestEmergency>, amount: u64) -> Result<()> {
+        let emergency = &mut ctx.accounts.emergency;
+        emergency.requester = ctx.accounts.requester.key();
+        emergency.stealth_account = ctx.accounts.stealth_share_account.key();
+        emergency.amount = amount;
+        emergency.request_timestamp = Clock::get()?.unix_timestamp;
+        emergency.executed = false;
+        emergency.bump = ctx.bumps.emergency;
+
+        emit!(EmergencyRequested {
+            requester: emergency.requester,
+            amount,
+            unlock_time: emergency.request_timestamp + ctx.accounts.vault_state.emergency_timelock,
+        });
+
+        Ok(())
+    }
+
+    pub fn execute_emergency_withdrawal(ctx: Context<ExecuteEmergency>) -> Result<()> {
+        let current_time = Clock::get()?.unix_timestamp;
+        let unlock_time =
+            ctx.accounts.emergency.request_timestamp + ctx.accounts.vault_state.emergency_timelock;
+        require!(current_time >= unlock_time, VaultError::TimelockNotExpired);
+
+        let shares = ctx.accounts.emergency.amount;
+        let usdc_out = calculate_withdrawal_assets(
+            ctx.accounts.vault_state.total_assets,
+            ctx.accounts.vault_state.total_shares,
+            shares,
+        )?;
+
+        let burn_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            Burn {
+                mint: ctx.accounts.share_mint.to_account_info(),
+                from: ctx.accounts.stealth_share_account.to_account_info(),
+                authority: ctx.accounts.requester.to_account_info(),
+            },
+        );
+        token_interface::burn(burn_ctx, shares)?;
+
+        let reserve_seeds = &[
+            b"usdc_reserve".as_ref(),
+            &[ctx.accounts.vault_state.reserve_bump],
+        ];
+        let reserve_signer = &[&reserve_seeds[..]];
+        let transfer_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.usdc_reserve.to_account_info(),
+                to: ctx.accounts.requester_usdc_account.to_account_info(),
+                authority: ctx.accounts.usdc_reserve.to_account_info(),
+                mint: ctx.accounts.usdc_mint.to_account_info(),
+            },
+            reserve_signer,
+        );
+        token_interface::transfer_checked(transfer_ctx, usdc_out, USDC_DECIMALS)?;
+
+        let vault = &mut ctx.accounts.vault_state;
+        vault.total_assets = vault
+            .total_assets
+            .checked_sub(usdc_out)
+            .ok_or(VaultError::Underflow)?;
+        vault.total_shares = vault
+            .total_shares
+            .checked_sub(shares)
+            .ok_or(VaultError::Underflow)?;
+        refresh_share_price(vault)?;
+
+        ctx.accounts.emergency.executed = true;
+
+        emit!(EmergencyExecuted {
+            requester: ctx.accounts.emergency.requester,
+            amount: shares,
+        });
+
+        Ok(())
+    }
+
+    pub fn update_aml_thresholds(
+        ctx: Context<AdminUpdate>,
+        retail: u64,
+        accredited: u64,
+        institutional: u64,
+        expired: u64,
+    ) -> Result<()> {
+        let vault = &mut ctx.accounts.vault_state;
+        vault.aml_thresholds = [retail, accredited, institutional];
+        vault.expired_threshold = expired;
+        Ok(())
+    }
+
+    pub fn update_regulator_key(
+        ctx: Context<AdminUpdate>,
+        new_pub_key_x: [u8; 32],
+        new_pub_key_y: [u8; 32],
+    ) -> Result<()> {
+        let vault = &mut ctx.accounts.vault_state;
+        vault.regulator_pubkey_x = new_pub_key_x;
+        vault.regulator_pubkey_y = new_pub_key_y;
+        Ok(())
+    }
+
+    pub fn update_emergency_timelock(
+        ctx: Context<AdminUpdate>,
+        new_timelock_seconds: i64,
+    ) -> Result<()> {
+        require!(new_timelock_seconds >= 0, VaultError::InvalidTimelock);
+        ctx.accounts.vault_state.emergency_timelock = new_timelock_seconds;
+        Ok(())
+    }
+
+    pub fn mark_decryption_authorized(ctx: Context<MarkDecryptionAuthorized>) -> Result<()> {
+        authorize_transfer_record_decryption(&mut ctx.accounts.transfer_record)
+    }
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct VaultState {
+    pub authority: Pubkey,
+    pub usdc_mint: Pubkey,
+    pub share_mint: Pubkey,
+    pub usdc_reserve: Pubkey,
+    pub total_assets: u64,
+    pub total_shares: u64,
+    pub share_price_numerator: u64,
+    pub share_price_denominator: u64,
+    pub yield_source: Pubkey,
+    pub liquid_buffer_bps: u16,
+    pub total_yield_earned: u64,
+    pub aml_thresholds: [u64; 3],
+    pub expired_threshold: u64,
+    pub emergency_timelock: i64,
+    pub regulator_pubkey_x: [u8; 32],
+    pub regulator_pubkey_y: [u8; 32],
+    pub bump: u8,
+    pub reserve_bump: u8,
+}
+
+#[account]
+pub struct ProofBuffer {
+    pub owner: Pubkey,
+    pub proof_hash: [u8; 32],
+    pub proof_a: [u8; 64],
+    pub proof_b: [u8; 128],
+    pub proof_c: [u8; 64],
+    pub public_inputs: [[u8; 32]; NUM_PUBLIC_INPUTS],
+    pub bump: u8,
+}
+
+impl ProofBuffer {
+    pub const SPACE: usize = 8 + 32 + 32 + 64 + 128 + 64 + (32 * NUM_PUBLIC_INPUTS) + 1;
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct EmergencyWithdrawal {
+    pub requester: Pubkey,
+    pub stealth_account: Pubkey,
+    pub amount: u64,
+    pub request_timestamp: i64,
+    pub executed: bool,
+    pub bump: u8,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, InitSpace)]
+pub enum TransferType {
+    Deposit,
+    Transfer,
+    Withdrawal,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct TransferRecord {
+    pub proof_hash: [u8; 32],
+    pub transfer_type: TransferType,
+    pub amount: u64,
+    pub timestamp: i64,
+    pub merkle_root_snapshot: [u8; 32],
+    #[max_len(384)]
+    pub encrypted_metadata: Vec<u8>,
+    pub decryption_authorized: bool,
+    pub signer: Pubkey,
+    pub bump: u8,
+}
+
+#[derive(Accounts)]
+pub struct InitVault<'info> {
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + VaultState::INIT_SPACE,
+        seeds = [b"vault_state"],
+        bump,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    pub usdc_mint: InterfaceAccount<'info, Mint>,
+
+    #[account(
+        init,
+        payer = authority,
+        mint::decimals = USDC_DECIMALS,
+        mint::authority = vault_state,
+    )]
+    pub share_mint: InterfaceAccount<'info, Mint>,
+
+    #[account(
+        init,
+        payer = authority,
+        token::mint = usdc_mint,
+        token::authority = usdc_reserve,
+        seeds = [b"usdc_reserve"],
+        bump,
+    )]
+    pub usdc_reserve: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct StoreProofData<'info> {
+    #[account(
+        init_if_needed,
+        payer = payer,
+        space = ProofBuffer::SPACE,
+        seeds = [b"proof_buffer", payer.key().as_ref()],
+        bump,
+    )]
+    pub proof_buffer: Box<Account<'info, ProofBuffer>>,
+
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct DepositWithProof<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+    )]
+    pub vault_state: Box<Account<'info, VaultState>>,
+
+    pub kyc_registry: Box<Account<'info, kyc_registry::KycRegistry>>,
+
+    #[account(
+        mut,
+        constraint = usdc_mint.key() == vault_state.usdc_mint @ VaultError::InvalidMint,
+    )]
+    pub usdc_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        constraint = share_mint.key() == vault_state.share_mint @ VaultError::InvalidMint,
+    )]
+    pub share_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        token::mint = usdc_mint,
+        token::authority = user,
+    )]
+    pub user_usdc_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [b"usdc_reserve"],
+        bump = vault_state.reserve_bump,
+    )]
+    pub usdc_reserve: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint = share_mint,
+    )]
+    pub stealth_share_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [b"proof_buffer", user.key().as_ref()],
+        bump = proof_buffer.bump,
+        constraint = proof_buffer.owner == user.key() @ VaultError::Unauthorized,
+        close = user,
+    )]
+    pub proof_buffer: Box<Account<'info, ProofBuffer>>,
+
+    #[account(
+        init,
+        payer = user,
+        space = 8 + TransferRecord::INIT_SPACE,
+        seeds = [b"transfer_record", proof_buffer.proof_hash.as_ref()],
+        bump,
+    )]
+    pub transfer_record: Box<Account<'info, TransferRecord>>,
+
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct TransferWithProof<'info> {
+    #[account(
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+    )]
+    pub vault_state: Box<Account<'info, VaultState>>,
+
+    pub kyc_registry: Box<Account<'info, kyc_registry::KycRegistry>>,
+
+    #[account(
+        constraint = share_mint.key() == vault_state.share_mint @ VaultError::InvalidMint,
+    )]
+    pub share_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        token::mint = share_mint,
+    )]
+    pub sender_stealth_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint = share_mint,
+    )]
+    pub recipient_stealth_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [b"proof_buffer", sender.key().as_ref()],
+        bump = proof_buffer.bump,
+        constraint = proof_buffer.owner == sender.key() @ VaultError::Unauthorized,
+        close = sender,
+    )]
+    pub proof_buffer: Box<Account<'info, ProofBuffer>>,
+
+    #[account(
+        init,
+        payer = sender,
+        space = 8 + TransferRecord::INIT_SPACE,
+        seeds = [b"transfer_record", proof_buffer.proof_hash.as_ref()],
+        bump,
+    )]
+    pub transfer_record: Box<Account<'info, TransferRecord>>,
+
+    #[account(mut)]
+    pub sender: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct WithdrawWithProof<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+    )]
+    pub vault_state: Box<Account<'info, VaultState>>,
+
+    pub kyc_registry: Box<Account<'info, kyc_registry::KycRegistry>>,
+
+    #[account(
+        constraint = usdc_mint.key() == vault_state.usdc_mint @ VaultError::InvalidMint,
+    )]
+    pub usdc_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        constraint = share_mint.key() == vault_state.share_mint @ VaultError::InvalidMint,
+    )]
+    pub share_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        seeds = [b"usdc_reserve"],
+        bump = vault_state.reserve_bump,
+    )]
+    pub usdc_reserve: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint = share_mint,
+    )]
+    pub stealth_share_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint = usdc_mint,
+    )]
+    pub user_usdc_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        seeds = [b"proof_buffer", stealth_owner.key().as_ref()],
+        bump = proof_buffer.bump,
+        constraint = proof_buffer.owner == stealth_owner.key() @ VaultError::Unauthorized,
+        close = stealth_owner,
+    )]
+    pub proof_buffer: Box<Account<'info, ProofBuffer>>,
+
+    #[account(
+        init,
+        payer = stealth_owner,
+        space = 8 + TransferRecord::INIT_SPACE,
+        seeds = [b"transfer_record", proof_buffer.proof_hash.as_ref()],
+        bump,
+    )]
+    pub transfer_record: Box<Account<'info, TransferRecord>>,
+
+    #[account(mut)]
+    pub stealth_owner: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+    pub token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct RequestEmergency<'info> {
+    #[account(
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        init,
+        payer = requester,
+        space = 8 + EmergencyWithdrawal::INIT_SPACE,
+        seeds = [b"emergency", requester.key().as_ref()],
+        bump,
+    )]
+    pub emergency: Account<'info, EmergencyWithdrawal>,
+
+    #[account(
+        token::mint = vault_state.share_mint,
+    )]
+    pub stealth_share_account: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub requester: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ExecuteEmergency<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+    )]
+    pub vault_state: Box<Account<'info, VaultState>>,
+
+    #[account(
+        mut,
+        seeds = [b"emergency", requester.key().as_ref()],
+        bump = emergency.bump,
+        constraint = emergency.requester == requester.key() @ VaultError::Unauthorized,
+        constraint = !emergency.executed @ VaultError::AlreadyExecuted,
+    )]
+    pub emergency: Box<Account<'info, EmergencyWithdrawal>>,
+
+    #[account(
+        mut,
+        constraint = share_mint.key() == vault_state.share_mint @ VaultError::InvalidMint,
+    )]
+    pub share_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        constraint = usdc_mint.key() == vault_state.usdc_mint @ VaultError::InvalidMint,
+    )]
+    pub usdc_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        seeds = [b"usdc_reserve"],
+        bump = vault_state.reserve_bump,
+    )]
+    pub usdc_reserve: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        constraint = stealth_share_account.key() == emergency.stealth_account @ VaultError::InvalidStealthAccount,
+    )]
+    pub stealth_share_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint = usdc_mint,
+        token::authority = requester,
+    )]
+    pub requester_usdc_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(mut)]
+    pub requester: Signer<'info>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct AdminUpdate<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+        has_one = authority @ VaultError::Unauthorized,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct MarkDecryptionAuthorized<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+        has_one = authority @ VaultError::Unauthorized,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(mut)]
+    pub transfer_record: Account<'info, TransferRecord>,
+
+    pub authority: Signer<'info>,
+}
+
+#[event]
+pub struct DepositVerified {
+    pub amount: u64,
+    pub shares: u64,
+    pub proof_hash: [u8; 32],
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct TransferVerified {
+    pub amount: u64,
+    pub proof_hash: [u8; 32],
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct WithdrawalVerified {
+    pub shares: u64,
+    pub assets_out: u64,
+    pub proof_hash: [u8; 32],
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct EmergencyRequested {
+    pub requester: Pubkey,
+    pub amount: u64,
+    pub unlock_time: i64,
+}
+
+#[event]
+pub struct EmergencyExecuted {
+    pub requester: Pubkey,
+    pub amount: u64,
+}
+
+#[error_code]
+pub enum VaultError {
+    #[msg("Invalid proof format.")]
+    InvalidProofFormat,
+    #[msg("ZK proof verification failed.")]
+    ProofVerificationFailed,
+    #[msg("Merkle root in proof does not match the registry root.")]
+    MerkleRootMismatch,
+    #[msg("Transfer amount in proof does not match the instruction parameter.")]
+    AmountMismatch,
+    #[msg("Proof timestamp is stale.")]
+    StaleProof,
+    #[msg("Threshold inputs do not match vault state.")]
+    ThresholdMismatch,
+    #[msg("Regulator key inputs do not match vault state.")]
+    RegulatorKeyMismatch,
+    #[msg("Wallet public input does not match the signer.")]
+    WalletBindingMismatch,
+    #[msg("Encrypted metadata length is invalid.")]
+    EncryptedMetadataLengthMismatch,
+    #[msg("Encrypted metadata does not match the proof public inputs.")]
+    EncryptedMetadataMismatch,
+    #[msg("Invalid mint address.")]
+    InvalidMint,
+    #[msg("Arithmetic overflow.")]
+    Overflow,
+    #[msg("Arithmetic underflow.")]
+    Underflow,
+    #[msg("Emergency timelock has not expired.")]
+    TimelockNotExpired,
+    #[msg("Emergency withdrawal already executed.")]
+    AlreadyExecuted,
+    #[msg("Unauthorized.")]
+    Unauthorized,
+    #[msg("Invalid stealth token account.")]
+    InvalidStealthAccount,
+    #[msg("Invalid timelock value.")]
+    InvalidTimelock,
+    #[msg("Proof hash mismatch.")]
+    ProofHashMismatch,
+    #[msg("Zero amount is not allowed.")]
+    ZeroAmount,
+    #[msg("Zero shares are not allowed.")]
+    ZeroShares,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_METADATA_LEN: usize = (NUM_PUBLIC_INPUTS - 10) * 32;
+
+    fn sample_vault_state() -> VaultState {
+        VaultState {
+            authority: Pubkey::new_unique(),
+            usdc_mint: Pubkey::new_unique(),
+            share_mint: Pubkey::new_unique(),
+            usdc_reserve: Pubkey::new_unique(),
+            total_assets: 10_000_000,
+            total_shares: 10_000_000,
+            share_price_numerator: 1,
+            share_price_denominator: 1,
+            yield_source: Pubkey::new_unique(),
+            liquid_buffer_bps: 2_000,
+            total_yield_earned: 0,
+            aml_thresholds: [
+                DEFAULT_RETAIL_THRESHOLD,
+                DEFAULT_ACCREDITED_THRESHOLD,
+                DEFAULT_INSTITUTIONAL_THRESHOLD,
+            ],
+            expired_threshold: DEFAULT_EXPIRED_THRESHOLD,
+            emergency_timelock: DEFAULT_TIMELOCK,
+            regulator_pubkey_x: [7u8; 32],
+            regulator_pubkey_y: [8u8; 32],
+            bump: 1,
+            reserve_bump: 2,
+        }
+    }
+
+    fn build_valid_public_inputs(
+        vault: &VaultState,
+        signer: &Pubkey,
+        merkle_root: [u8; 32],
+        amount: u64,
+        timestamp: i64,
+        encrypted_metadata: &[u8],
+    ) -> [[u8; 32]; NUM_PUBLIC_INPUTS] {
+        let mut public_inputs = [[0u8; 32]; NUM_PUBLIC_INPUTS];
+        public_inputs[0] = merkle_root;
+        public_inputs[1] = u64_to_field_bytes(amount);
+        public_inputs[2] = i64_to_field_bytes(timestamp);
+        public_inputs[3] = u64_to_field_bytes(vault.aml_thresholds[0]);
+        public_inputs[4] = u64_to_field_bytes(vault.aml_thresholds[1]);
+        public_inputs[5] = u64_to_field_bytes(vault.aml_thresholds[2]);
+        public_inputs[6] = u64_to_field_bytes(vault.expired_threshold);
+        public_inputs[7] = vault.regulator_pubkey_x;
+        public_inputs[8] = vault.regulator_pubkey_y;
+        public_inputs[9] = solana_pubkey_to_field_bytes(signer);
+
+        for (index, chunk) in encrypted_metadata.chunks_exact(32).enumerate() {
+            public_inputs[10 + index].copy_from_slice(chunk);
+        }
+
+        public_inputs
+    }
+
+    fn assert_error_name(err: anchor_lang::error::Error, name: &str) {
+        assert!(
+            format!("{err:?}").contains(name),
+            "expected error containing {name}, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn strict_validate_all_public_inputs_accepts_valid_bundle() {
+        let vault = sample_vault_state();
+        let signer = Pubkey::new_unique();
+        let timestamp = 1_763_077_200;
+        let amount = 42_000_000;
+        let merkle_root = [3u8; 32];
+        let encrypted_metadata = vec![11u8; TEST_METADATA_LEN];
+        let public_inputs = build_valid_public_inputs(
+            &vault,
+            &signer,
+            merkle_root,
+            amount,
+            timestamp,
+            &encrypted_metadata,
+        );
+
+        validate_all_public_inputs(
+            &public_inputs,
+            merkle_root,
+            amount,
+            timestamp + 30,
+            &vault,
+            &signer,
+            &encrypted_metadata,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn strict_rejects_merkle_root_mismatch() {
+        let vault = sample_vault_state();
+        let signer = Pubkey::new_unique();
+        let timestamp = 1_763_077_200;
+        let amount = 42_000_000;
+        let encrypted_metadata = vec![13u8; TEST_METADATA_LEN];
+        let public_inputs = build_valid_public_inputs(
+            &vault,
+            &signer,
+            [3u8; 32],
+            amount,
+            timestamp,
+            &encrypted_metadata,
+        );
+
+        let err = validate_all_public_inputs(
+            &public_inputs,
+            [9u8; 32],
+            amount,
+            timestamp,
+            &vault,
+            &signer,
+            &encrypted_metadata,
+        )
+        .unwrap_err();
+
+        assert_error_name(err, "MerkleRootMismatch");
+    }
+
+    #[test]
+    fn strict_rejects_amount_mismatch() {
+        let vault = sample_vault_state();
+        let signer = Pubkey::new_unique();
+        let timestamp = 1_763_077_200;
+        let amount = 42_000_000;
+        let encrypted_metadata = vec![17u8; TEST_METADATA_LEN];
+        let public_inputs = build_valid_public_inputs(
+            &vault,
+            &signer,
+            [3u8; 32],
+            amount,
+            timestamp,
+            &encrypted_metadata,
+        );
+
+        let err = validate_all_public_inputs(
+            &public_inputs,
+            [3u8; 32],
+            amount + 1,
+            timestamp,
+            &vault,
+            &signer,
+            &encrypted_metadata,
+        )
+        .unwrap_err();
+
+        assert_error_name(err, "AmountMismatch");
+    }
+
+    #[test]
+    fn strict_rejects_stale_timestamp() {
+        let vault = sample_vault_state();
+        let signer = Pubkey::new_unique();
+        let timestamp = 1_763_077_200;
+        let amount = 42_000_000;
+        let encrypted_metadata = vec![19u8; TEST_METADATA_LEN];
+        let public_inputs = build_valid_public_inputs(
+            &vault,
+            &signer,
+            [3u8; 32],
+            amount,
+            timestamp,
+            &encrypted_metadata,
+        );
+
+        let err = validate_all_public_inputs(
+            &public_inputs,
+            [3u8; 32],
+            amount,
+            timestamp + 61,
+            &vault,
+            &signer,
+            &encrypted_metadata,
+        )
+        .unwrap_err();
+
+        assert_error_name(err, "StaleProof");
+    }
+
+    #[test]
+    fn strict_rejects_threshold_mismatch() {
+        let vault = sample_vault_state();
+        let signer = Pubkey::new_unique();
+        let timestamp = 1_763_077_200;
+        let amount = 42_000_000;
+        let encrypted_metadata = vec![23u8; TEST_METADATA_LEN];
+        let mut public_inputs = build_valid_public_inputs(
+            &vault,
+            &signer,
+            [3u8; 32],
+            amount,
+            timestamp,
+            &encrypted_metadata,
+        );
+        public_inputs[3] = u64_to_field_bytes(DEFAULT_RETAIL_THRESHOLD + 1);
+
+        let err = validate_all_public_inputs(
+            &public_inputs,
+            [3u8; 32],
+            amount,
+            timestamp,
+            &vault,
+            &signer,
+            &encrypted_metadata,
+        )
+        .unwrap_err();
+
+        assert_error_name(err, "ThresholdMismatch");
+    }
+
+    #[test]
+    fn strict_rejects_regulator_key_mismatch() {
+        let vault = sample_vault_state();
+        let signer = Pubkey::new_unique();
+        let timestamp = 1_763_077_200;
+        let amount = 42_000_000;
+        let encrypted_metadata = vec![29u8; TEST_METADATA_LEN];
+        let mut public_inputs = build_valid_public_inputs(
+            &vault,
+            &signer,
+            [3u8; 32],
+            amount,
+            timestamp,
+            &encrypted_metadata,
+        );
+        public_inputs[7] = [99u8; 32];
+
+        let err = validate_all_public_inputs(
+            &public_inputs,
+            [3u8; 32],
+            amount,
+            timestamp,
+            &vault,
+            &signer,
+            &encrypted_metadata,
+        )
+        .unwrap_err();
+
+        assert_error_name(err, "RegulatorKeyMismatch");
+    }
+
+    #[test]
+    fn strict_rejects_wallet_binding_mismatch() {
+        let vault = sample_vault_state();
+        let signer = Pubkey::new_unique();
+        let timestamp = 1_763_077_200;
+        let amount = 42_000_000;
+        let encrypted_metadata = vec![31u8; TEST_METADATA_LEN];
+        let mut public_inputs = build_valid_public_inputs(
+            &vault,
+            &signer,
+            [3u8; 32],
+            amount,
+            timestamp,
+            &encrypted_metadata,
+        );
+        public_inputs[9] = solana_pubkey_to_field_bytes(&Pubkey::new_unique());
+
+        let err = validate_all_public_inputs(
+            &public_inputs,
+            [3u8; 32],
+            amount,
+            timestamp,
+            &vault,
+            &signer,
+            &encrypted_metadata,
+        )
+        .unwrap_err();
+
+        assert_error_name(err, "WalletBindingMismatch");
+    }
+
+    #[test]
+    fn strict_replay_protection_hash_uses_all_proof_points() {
+        let proof_a = [1u8; 64];
+        let proof_b = [2u8; 128];
+        let proof_c = [3u8; 64];
+        let baseline = compute_proof_hash(&proof_a, &proof_b, &proof_c);
+
+        let mut changed_b = proof_b;
+        changed_b[0] ^= 0xAA;
+        let mut changed_c = proof_c;
+        changed_c[0] ^= 0x55;
+
+        assert_ne!(baseline, compute_proof_hash(&proof_a, &changed_b, &proof_c));
+        assert_ne!(baseline, compute_proof_hash(&proof_a, &proof_b, &changed_c));
+    }
+
+    #[test]
+    fn strict_transfer_record_keeps_full_ciphertext_bytes() {
+        let encrypted_metadata = vec![41u8; TEST_METADATA_LEN];
+        let record = TransferRecord {
+            proof_hash: [1u8; 32],
+            transfer_type: TransferType::Deposit,
+            amount: 42_000_000,
+            timestamp: 1_763_077_200,
+            merkle_root_snapshot: [2u8; 32],
+            encrypted_metadata: encrypted_metadata.clone(),
+            decryption_authorized: false,
+            signer: Pubkey::new_unique(),
+            bump: 1,
+        };
+
+        assert!(record.encrypted_metadata.len() > 32);
+    }
+
+    #[test]
+    fn strict_decryption_authorization_marks_transfer_record() {
+        let mut record = TransferRecord {
+            proof_hash: [1u8; 32],
+            transfer_type: TransferType::Transfer,
+            amount: 7_000_000,
+            timestamp: 1_763_077_200,
+            merkle_root_snapshot: [2u8; 32],
+            encrypted_metadata: vec![43u8; TEST_METADATA_LEN],
+            decryption_authorized: false,
+            signer: Pubkey::new_unique(),
+            bump: 1,
+        };
+
+        authorize_transfer_record_decryption(&mut record).unwrap();
+
+        assert!(record.decryption_authorized);
+    }
+
+    #[test]
+    fn share_first_deposit_mints_one_to_one() {
+        let minted = calculate_deposit_shares(0, 0, 10_000).unwrap();
+        assert_eq!(minted, 10_000);
+    }
+
+    #[test]
+    fn share_price_increases_after_yield() {
+        let (num, denom) = update_share_price(10_500, 10_000).unwrap();
+        assert_eq!((num, denom), (10_500, 10_000));
+    }
+
+    #[test]
+    fn share_second_deposit_uses_current_price() {
+        let minted = calculate_deposit_shares(10_500, 10_000, 1_050).unwrap();
+        assert_eq!(minted, 1_000);
+    }
+
+    #[test]
+    fn share_withdrawal_returns_correct_assets() {
+        let assets = calculate_withdrawal_assets(10_500, 10_000, 1_000).unwrap();
+        assert_eq!(assets, 1_050);
+    }
+
+    #[test]
+    fn share_zero_shares_cannot_be_withdrawn() {
+        let err = calculate_withdrawal_assets(10_500, 10_000, 0).unwrap_err();
+        assert_error_name(err, "ZeroShares");
+    }
+
+    #[test]
+    fn share_accounting_stays_consistent_over_multiple_ops() {
+        let first_mint = calculate_deposit_shares(0, 0, 10_000).unwrap();
+        let mut total_assets = 10_000;
+        let mut total_shares = first_mint;
+
+        total_assets += 500;
+        let second_mint = calculate_deposit_shares(total_assets, total_shares, 1_050).unwrap();
+        total_assets += 1_050;
+        total_shares += second_mint;
+
+        let withdrawn_assets =
+            calculate_withdrawal_assets(total_assets, total_shares, 500).unwrap();
+        total_assets -= withdrawn_assets;
+        total_shares -= 500;
+
+        assert_eq!(total_assets, 11_025);
+        assert_eq!(total_shares, 10_500);
+    }
+}

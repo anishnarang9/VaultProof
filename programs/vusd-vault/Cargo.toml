@@ -1,0 +1,27 @@
+[package]
+name = "vusd-vault"
+version = "0.1.0"
+description = "VaultProof vUSDC Vault - ZK proof verified deposits, transfers, and withdrawals"
+edition = "2021"
+
+[lints.rust]
+unexpected_cfgs = { level = "allow", check-cfg = ['cfg(feature, values("anchor-debug", "custom-heap", "custom-panic"))'] }
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "vusd_vault"
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+
+[dependencies]
+anchor-lang = { version = "0.32.1", features = ["init-if-needed"] }
+anchor-spl = "0.32.1"
+groth16-solana = "0.2.0"
+kyc-registry = { path = "../kyc-registry", features = ["cpi"] }
+solana-sha256-hasher = "2.3.0"
