@@ -509,6 +509,38 @@ describe("kyc_revocation", () => {
     );
   });
 
+  it("re-adding the same revoked leaf hash is rejected in the PDA fallback path", async function () {
+    this.timeout(60_000);
+
+    const stateTree = await fetchStateTree();
+    const nextInsertProof = getProofForIndex(
+      hashPair,
+      await fetchAllLeaves(),
+      zeroHashes,
+      stateTree.nextIndex
+    ).proof;
+    const [credentialLeafPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("credential_leaf"), registryPda.toBuffer(), targetLeaf],
+      program.programId
+    );
+
+    await expectReject(
+      (program.methods as any)
+        .addCredential(
+          Array.from(targetLeaf),
+          nextInsertProof.map((node) => Array.from(node))
+        )
+        .accounts({
+          registry: registryPda,
+          stateTree: stateTreePda,
+          credentialLeaf: credentialLeafPda,
+          authority: authority.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc()
+    );
+  });
+
   it("revocation followed by add produces a fresh root and a new valid proof", async function () {
     this.timeout(60_000);
 

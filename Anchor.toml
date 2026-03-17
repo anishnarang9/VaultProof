@@ -19,8 +19,20 @@ compliance_admin = "BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Localnet"
+cluster = "http://127.0.0.1:8899"
 wallet = "~/.config/solana/id.json"
+
+[test]
+startup_wait = 60000
+
+[test.validator]
+url = "https://api.devnet.solana.com"
+
+[[test.validator.clone]]
+address = "SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf"
+
+[[test.validator.clone]]
+address = "BSTq9w3kZwNwpBXJEvTZz2G9ZTNyKBvoSeXMvwb4cNZr"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 \"tests/**/*.ts\""

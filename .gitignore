@@ -10,3 +10,4 @@ test-ledger/
 app/test-results/
 tests/*.bak
 tests/*.old
+app/e2e/.localnet-state.json

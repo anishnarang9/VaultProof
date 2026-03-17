@@ -2,7 +2,7 @@
  * VaultProof Comprehensive Circuit Test Suite
  *
  * Exhaustive edge-case testing for the compliance circuit.
- * Tests 8 categories covering happy paths, threshold violations,
+ * Tests 9 categories covering happy paths, threshold violations,
  * expiry behavior, Merkle membership, solvency, signature integrity,
  * ElGamal trapdoor encryption, and boundary values.
  *
@@ -26,6 +26,7 @@ import {
     buildCircuitInput,
     buildMetadataFields,
     buildScenario,
+    defaultSourceOfFundsHash,
     tryProve,
     usd,
     TREE_DEPTH,
@@ -94,6 +95,7 @@ async function main() {
 
     // Hashed name (simulating Poseidon hash of "Alice Smith")
     const hashedName = F.toObject(poseidon([12345678901234567890n]));
+    const baseSourceOfFundsHash = defaultSourceOfFundsHash(ctx);
 
     // Default valid credential fields
     function validCredFields(overrides = {}) {
@@ -104,6 +106,8 @@ async function main() {
             jurisdiction: 756n,
             accreditationStatus: 0n,  // retail by default
             credentialExpiry: futureExpiry,
+            sourceOfFundsHash: baseSourceOfFundsHash,
+            credentialVersion: 1n,
             ...overrides,
         };
     }
@@ -989,6 +993,156 @@ async function main() {
             r.success
                 ? "Max u64 works with institutional tier (threshold == max u64)"
                 : `Rejected: ${r.error?.slice(0, 80)}`
+        );
+    }
+
+    // ================================================================
+    // CATEGORY 9: CREDENTIAL EXTENSION FIELDS
+    // ================================================================
+    startCategory("9. Credential Extension Fields");
+
+    // 9.1 Valid proof with an explicit source-of-funds hash present
+    {
+        const explicitSourceHash = F.toObject(poseidon([54321n]));
+        const r = await proveScenario({
+            credFieldOverrides: {
+                sourceOfFundsHash: explicitSourceHash,
+            },
+            transferAmount: usd(4000),
+            balance: usd(50000),
+        });
+        recordResult(
+            "Valid proof with explicit source-of-funds hash present",
+            r.success,
+            r.success ? "Extended credential fields are accepted by the circuit" : r.error
+        );
+    }
+
+    // 9.2 Valid proof with credentialVersion = 2
+    {
+        const r = await proveScenario({
+            credFieldOverrides: {
+                credentialVersion: 2n,
+            },
+            transferAmount: usd(7500),
+            balance: usd(50000),
+        });
+        recordResult(
+            "Valid proof with credentialVersion = 2",
+            r.success,
+            r.success ? "Alternate credential version signs and verifies correctly" : r.error
+        );
+    }
+
+    // 9.3 Different sourceOfFundsHash changes the leaf hash
+    {
+        const credA = createCredential(
+            ctx,
+            issuer,
+            validCredFields({
+                sourceOfFundsHash: F.toObject(poseidon([11111n])),
+            }),
+            identitySecret
+        );
+        const credB = createCredential(
+            ctx,
+            issuer,
+            validCredFields({
+                sourceOfFundsHash: F.toObject(poseidon([22222n])),
+            }),
+            identitySecret
+        );
+        const leafChanged = credA.leafBigInt !== credB.leafBigInt;
+        recordResult(
+            "Different sourceOfFundsHash produces a different credential leaf",
+            leafChanged,
+            leafChanged
+                ? "The new field is committed into the signed credential and Merkle leaf"
+                : "Leaf hash did not change when sourceOfFundsHash changed"
+        );
+    }
+
+    // 9.4 credentialVersion = 0 still works
+    {
+        const r = await proveScenario({
+            credFieldOverrides: {
+                credentialVersion: 0n,
+            },
+            transferAmount: usd(2500),
+            balance: usd(50000),
+        });
+        recordResult(
+            "credentialVersion = 0 is accepted",
+            r.success,
+            r.success ? "Version is treated as an unconstrained numeric field" : r.error
+        );
+    }
+
+    // 9.5 Credential with all new fields verifies against a non-trivial depth-20 Merkle path
+    {
+        const credentials = [
+            createCredential(ctx, issuer, validCredFields({
+                name: F.toObject(poseidon([101n])),
+                sourceOfFundsHash: F.toObject(poseidon([30001n])),
+                credentialVersion: 1n,
+            }), identitySecret + 1n),
+            createCredential(ctx, issuer, validCredFields({
+                name: F.toObject(poseidon([102n])),
+                sourceOfFundsHash: F.toObject(poseidon([30002n])),
+                credentialVersion: 1n,
+            }), identitySecret + 2n),
+            createCredential(ctx, issuer, validCredFields({
+                name: F.toObject(poseidon([103n])),
+                sourceOfFundsHash: F.toObject(poseidon([30003n])),
+                credentialVersion: 1n,
+            }), identitySecret + 3n),
+            createCredential(ctx, issuer, validCredFields({
+                name: F.toObject(poseidon([104n])),
+                accreditationStatus: 1n,
+                sourceOfFundsHash: F.toObject(poseidon([30004n])),
+                credentialVersion: 2n,
+            }), identitySecret + 4n),
+        ];
+        const targetIndex = 3;
+        const { root, treeLevels } = buildMerkleTree(
+            ctx,
+            credentials.map((credential) => credential.leafBigInt)
+        );
+        const merkleProof = getMerkleProof(treeLevels, targetIndex);
+        const targetCredential = credentials[targetIndex];
+        const transferAmount = usd(500000);
+        const metadataFields = buildMetadataFields(
+            targetCredential,
+            recipientAddress,
+            transferAmount,
+            nowTs
+        );
+        const { encrypted } = computeElGamalCiphertexts(
+            ctx,
+            regulator,
+            metadataFields,
+            elgamalRandomness
+        );
+        const input = buildCircuitInput({
+            credential: targetCredential,
+            merkleProof,
+            merkleRoot: root,
+            transferAmount,
+            currentTimestamp: nowTs,
+            balance: usd(1000000),
+            recipientAddress,
+            elgamalRandomness,
+            regulatorKeypair: regulator,
+            encryptedMetadata: encrypted,
+        });
+        const r = await tryProve(input, vkey);
+        const hasNonZeroPath = merkleProof.pathIndices.some((index) => index === 1);
+        recordResult(
+            `Extended credential verifies on a non-zero depth-${TREE_DEPTH} Merkle path`,
+            r.success && hasNonZeroPath,
+            r.success && hasNonZeroPath
+                ? "Depth-20 proof succeeded with a non-trivial Merkle index"
+                : `Proof failed or path was trivial: ${r.error ?? "missing non-zero branch"}`
         );
     }
 

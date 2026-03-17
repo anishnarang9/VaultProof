@@ -17,6 +17,7 @@ interface CredentialCryptoContext {
 export interface PreparedCredential {
   accreditationStatus: bigint;
   credHashFinalBigInt: bigint;
+  credentialVersion: bigint;
   credentialExpiry: bigint;
   dateOfBirth: bigint;
   identitySecret: bigint;
@@ -28,6 +29,7 @@ export interface PreparedCredential {
   leafBigInt: bigint;
   name: bigint;
   nationality: bigint;
+  sourceOfFundsHash: bigint;
   walletPubkey: bigint;
 }
 
@@ -69,6 +71,26 @@ function parseIdentitySecret(value: string): bigint {
   }
 }
 
+function parseFieldValue(value: string | number | bigint | undefined): bigint {
+  if (typeof value === 'bigint') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    return BigInt(value);
+  }
+
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return 0n;
+  }
+
+  try {
+    return BigInt(value);
+  } catch {
+    return textToField(value);
+  }
+}
+
 export async function prepareStoredCredential(credential: StoredCredential): Promise<PreparedCredential> {
   const { eddsa, poseidon } = await getCredentialCryptoContext();
   const field = eddsa.babyJub.F;
@@ -80,16 +102,20 @@ export async function prepareStoredCredential(credential: StoredCredential): Pro
   const jurisdiction = countryCodeToNumeric(credential.countryCode || credential.jurisdiction);
   const accreditationStatus = accreditationToStatus(credential.accreditation);
   const credentialExpiry = dateStringToUnixTimestamp(credential.expiresAt);
+  const sourceOfFundsHash = parseFieldValue(credential.sourceOfFundsHash);
+  const credentialVersion = BigInt(credential.credentialVersion ?? 1);
   const identitySecret = parseIdentitySecret(credential.identitySecret);
   const walletPubkey = walletBytesToField(credential.wallet);
 
   const credHash1 = poseidon([name, nationality]);
   const credHash2 = poseidon([dateOfBirth, jurisdiction]);
   const credHash3 = poseidon([accreditationStatus, credentialExpiry]);
+  const credHash4 = poseidon([sourceOfFundsHash, credentialVersion]);
   const credHashFinal = poseidon([
     BigInt(poseidon.F.toString(credHash1)),
     BigInt(poseidon.F.toString(credHash2)),
     BigInt(poseidon.F.toString(credHash3)),
+    BigInt(poseidon.F.toString(credHash4)),
   ]);
   const credHashFinalBigInt = BigInt(poseidon.F.toString(credHashFinal));
   const signature = eddsa.signPoseidon(issuerPrivateKey, credHashFinal);
@@ -98,6 +124,7 @@ export async function prepareStoredCredential(credential: StoredCredential): Pro
   return {
     accreditationStatus,
     credHashFinalBigInt,
+    credentialVersion,
     credentialExpiry,
     dateOfBirth,
     identitySecret,
@@ -112,6 +139,7 @@ export async function prepareStoredCredential(credential: StoredCredential): Pro
     leafBigInt: BigInt(poseidon.F.toString(leaf)),
     name,
     nationality,
+    sourceOfFundsHash,
     walletPubkey,
   };
 }
@@ -126,6 +154,8 @@ export async function hashCredentialLeaf(
     | 'fullName'
     | 'identitySecret'
     | 'jurisdiction'
+    | 'sourceOfFundsHash'
+    | 'credentialVersion'
     | 'wallet'
   >,
 ): Promise<string> {

@@ -193,12 +193,22 @@ describe("kyc_registry_light", () => {
 
   let hashPair: (...inputs: Buffer[]) => Buffer;
   let zeroHashes: Buffer[];
+  let revokedLeafForReplay: Buffer | null = null;
+  let revokedLeafOldProof: Buffer[] = [];
+  let revokedLeafIndex = -1;
 
   function makeLeaf(seed: number) {
     return hashPair(
       bigIntToBuffer(BigInt(seed)),
       bigIntToBuffer(BigInt(seed * 1000))
     );
+  }
+
+  function deriveCredentialLeafPda(leafHash: Buffer) {
+    return PublicKey.findProgramAddressSync(
+      [Buffer.from("credential_leaf"), registryPda.toBuffer(), leafHash],
+      program.programId
+    )[0];
   }
 
   async function fundSecondaryAuthority() {
@@ -312,10 +322,7 @@ describe("kyc_registry_light", () => {
       stateTree.nextIndex
     ).proof;
 
-    const [credentialLeafPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("credential_leaf"), registryPda.toBuffer(), leafHash],
-      program.programId
-    );
+    const credentialLeafPda = deriveCredentialLeafPda(leafHash);
 
     let builder = (program.methods as any)
       .addCredential(
@@ -336,6 +343,42 @@ describe("kyc_registry_light", () => {
 
     const signature = await builder.rpc();
     return { signature, credentialLeafPda };
+  }
+
+  async function revokeCredential(
+    leafHash: Buffer,
+    signer: PublicKey,
+    signers: Keypair[] = []
+  ) {
+    const leaves = await fetchAllLeaves();
+    const targetLeaf = leaves.find((leaf) => toHex(leaf.hash) === toHex(leafHash));
+    assert.exists(targetLeaf, "expected credential leaf to exist before revocation");
+
+    const proof = getProofForIndex(
+      hashPair,
+      leaves,
+      zeroHashes,
+      targetLeaf!.index
+    ).proof;
+
+    let builder = (program.methods as any)
+      .revokeCredential(
+        Array.from(leafHash),
+        proof.map((node) => Array.from(node))
+      )
+      .accounts({
+        registry: registryPda,
+        stateTree: stateTreePda,
+        credentialLeaf: deriveCredentialLeafPda(leafHash),
+        authority: signer,
+      });
+
+    if (signers.length > 0) {
+      builder = builder.signers(signers);
+    }
+
+    const signature = await builder.rpc();
+    return { signature, proof, index: targetLeaf!.index };
   }
 
   async function nextFreshLeaf(offset: number) {
@@ -400,6 +443,10 @@ describe("kyc_registry_light", () => {
 
     assert.exists(addedLeaf);
     assert.equal(registry.credentialCount.toString(), activeLeaves.length.toString());
+    assert.equal(
+      toHex(Buffer.from(registry.merkleRoot)),
+      toHex(stateTreeAfter.root)
+    );
     assert.equal(stateTreeAfter.nextIndex, stateTreeBefore.nextIndex + 1);
     assert.notEqual(toHex(stateTreeBefore.root), toHex(stateTreeAfter.root));
     assert.equal(
@@ -414,6 +461,24 @@ describe("kyc_registry_light", () => {
     assert.deepEqual(
       Array.from(addedEvent?.data.leafHash ?? []),
       Array.from(leafHash)
+    );
+  });
+
+  it("registry.merkle_root mirrors the state tree root after each add", async function () {
+    this.timeout(60_000);
+
+    await ensureRegistryInitialized();
+    await ensureAuthority(authority.publicKey);
+
+    const leafHash = await nextFreshLeaf(6);
+    await addCredential(leafHash, authority.publicKey);
+
+    const registry = await programAccounts.kycRegistry.fetch(registryPda);
+    const stateTree = await fetchStateTree();
+
+    assert.equal(
+      toHex(Buffer.from(registry.merkleRoot)),
+      toHex(stateTree.root)
     );
   });
 
@@ -460,6 +525,107 @@ describe("kyc_registry_light", () => {
     );
   });
 
+  it("credential_count tracks every credential insertion", async function () {
+    this.timeout(60_000);
+
+    await ensureRegistryInitialized();
+    await ensureAuthority(authority.publicKey);
+
+    const registry = await programAccounts.kycRegistry.fetch(registryPda);
+    const leaves = await fetchAllLeaves();
+
+    assert.equal(registry.credentialCount.toString(), leaves.length.toString());
+  });
+
+  it("revoke_credential updates merkle_root, flips the leaf inactive, and increments revoked_count", async function () {
+    this.timeout(60_000);
+
+    await ensureRegistryInitialized();
+    await ensureAuthority(authority.publicKey);
+
+    const leafHash = await nextFreshLeaf(7);
+    await addCredential(leafHash, authority.publicKey);
+
+    const registryBefore = await programAccounts.kycRegistry.fetch(registryPda);
+    const rootBefore = (await fetchStateTree()).root;
+    const { proof, index } = await revokeCredential(leafHash, authority.publicKey);
+
+    const registryAfter = await programAccounts.kycRegistry.fetch(registryPda);
+    const stateTreeAfter = await fetchStateTree();
+    const revokedLeaf = (await fetchAllLeaves()).find(
+      (leaf) => toHex(leaf.hash) === toHex(leafHash)
+    );
+
+    revokedLeafForReplay = leafHash;
+    revokedLeafOldProof = proof;
+    revokedLeafIndex = index;
+
+    assert.equal(
+      Number(registryAfter.revokedCount),
+      Number(registryBefore.revokedCount) + 1
+    );
+    assert.notEqual(toHex(rootBefore), toHex(stateTreeAfter.root));
+    assert.equal(
+      toHex(Buffer.from(registryAfter.merkleRoot)),
+      toHex(stateTreeAfter.root)
+    );
+    assert.exists(revokedLeaf);
+    assert.isFalse(revokedLeaf!.active);
+  });
+
+  it("a pre-revocation proof no longer reconstructs the current root", async function () {
+    this.timeout(60_000);
+
+    assert.isNotNull(revokedLeafForReplay, "revocation setup leaf must exist");
+    assert.isAtLeast(revokedLeafIndex, 0, "revocation setup index must exist");
+
+    const stateTree = await fetchStateTree();
+    const reconstructedRoot = computeRootFromProof(
+      hashPair,
+      revokedLeafForReplay!,
+      revokedLeafIndex,
+      revokedLeafOldProof
+    );
+
+    assert.notEqual(toHex(reconstructedRoot), toHex(stateTree.root));
+  });
+
+  it("revoking an already-revoked credential fails", async function () {
+    this.timeout(60_000);
+
+    assert.isNotNull(revokedLeafForReplay, "revocation setup leaf must exist");
+
+    await expectReject(
+      revokeCredential(revokedLeafForReplay!, authority.publicKey)
+    );
+  });
+
+  it("only the current authority can revoke_credential", async function () {
+    this.timeout(60_000);
+
+    await ensureRegistryInitialized();
+    await ensureAuthority(authority.publicKey);
+
+    const protectedLeaf = await nextFreshLeaf(8);
+    await addCredential(protectedLeaf, authority.publicKey);
+    const stateTreeBefore = await fetchStateTree();
+
+    await expectReject(
+      revokeCredential(protectedLeaf, secondaryAuthority.publicKey, [
+        secondaryAuthority,
+      ])
+    );
+
+    const stateTreeAfter = await fetchStateTree();
+    const protectedLeafRecord = (await fetchAllLeaves()).find(
+      (leaf) => toHex(leaf.hash) === toHex(protectedLeaf)
+    );
+
+    assert.equal(toHex(stateTreeBefore.root), toHex(stateTreeAfter.root));
+    assert.exists(protectedLeafRecord);
+    assert.isTrue(protectedLeafRecord!.active);
+  });
+
   it("transfer_authority changes authority and rejects the old authority afterwards", async function () {
     this.timeout(60_000);
 
@@ -488,10 +654,7 @@ describe("kyc_registry_light", () => {
       zeroHashes,
       stateTree.nextIndex
     ).proof;
-    const [credentialLeafPda] = PublicKey.findProgramAddressSync(
-      [Buffer.from("credential_leaf"), registryPda.toBuffer(), unauthorizedLeaf],
-      program.programId
-    );
+    const credentialLeafPda = deriveCredentialLeafPda(unauthorizedLeaf);
 
     await expectReject(
       (program.methods as any)

@@ -32,6 +32,8 @@ template VaultProofCompliance(treeDepth, numMetadataFields) {
     signal input jurisdiction;          // Jurisdiction code
     signal input accreditationStatus;   // 0=retail, 1=accredited, 2=institutional
     signal input credentialExpiry;      // Unix timestamp when credential expires
+    signal input sourceOfFundsHash;     // Poseidon hash of source-of-funds attestation
+    signal input credentialVersion;     // Credential format version number
 
     signal input identitySecret;        // Random secret binding credential to user
 
@@ -78,7 +80,7 @@ template VaultProofCompliance(treeDepth, numMetadataFields) {
     // ================================================================
     // Hash all credential fields using nested Poseidon
     // leaf = Poseidon(Poseidon(name, nationality), Poseidon(dob, jurisdiction),
-    //                 Poseidon(accreditation, expiry), identitySecret)
+    //                 Poseidon(accreditation, expiry), Poseidon(sourceOfFundsHash, version))
 
     component credHash1 = Poseidon(2);
     credHash1.inputs[0] <== name;
@@ -92,11 +94,16 @@ template VaultProofCompliance(treeDepth, numMetadataFields) {
     credHash3.inputs[0] <== accreditationStatus;
     credHash3.inputs[1] <== credentialExpiry;
 
-    // Combine the three sub-hashes into the credential hash
-    component credHashFinal = Poseidon(3);
+    component credHash4 = Poseidon(2);
+    credHash4.inputs[0] <== sourceOfFundsHash;
+    credHash4.inputs[1] <== credentialVersion;
+
+    // Combine the four sub-hashes into the credential hash
+    component credHashFinal = Poseidon(4);
     credHashFinal.inputs[0] <== credHash1.out;
     credHashFinal.inputs[1] <== credHash2.out;
     credHashFinal.inputs[2] <== credHash3.out;
+    credHashFinal.inputs[3] <== credHash4.out;
 
     // Verify AMINA's EdDSA signature over the credential hash
     component sigVerifier = EdDSAPoseidonVerifier();

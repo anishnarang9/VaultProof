@@ -1,143 +1,221 @@
-import * as anchor from '@coral-xyz/anchor';
-import { PublicKey, SystemProgram, Keypair } from '@solana/web3.js';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import * as anchor from "@coral-xyz/anchor";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   createMint,
   getOrCreateAssociatedTokenAccount,
-  mintTo,
-} from '@solana/spl-token';
+} from "@solana/spl-token";
 
-const VAULT_PROGRAM_ID = new PublicKey('CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu');
-const KYC_PROGRAM_ID = new PublicKey('NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD');
+const ROOT = resolve(__dirname, "..");
+const TEST_YIELD_VENUE = Keypair.fromSeed(Uint8Array.from(Array(32).fill(9))).publicKey;
+const USDC_DECIMALS = 1_000_000n;
+const RISK_LIMITS = {
+  circuitBreakerThreshold: 100_000n * USDC_DECIMALS,
+  maxSingleDeposit: 50_000n * USDC_DECIMALS,
+  maxSingleTransaction: 50_000n * USDC_DECIMALS,
+  maxDailyTransactions: 100,
+};
+const TEST_YIELD_AMOUNT = 100n * USDC_DECIMALS;
 
-// Use the test USDC mint we just created — update this if you create a new one
-const TEST_USDC_MINT = new PublicKey('Rzy12Rn2BeyWMo47P5byzkKFPAWsvJqg19ju2Mmu8Da');
+type InitializedVault = {
+  authority: PublicKey;
+  usdcMint: PublicKey;
+  usdcReservePda: PublicKey;
+  vaultProgram: anchor.Program<any>;
+  vaultState: any;
+  vaultStatePda: PublicKey;
+  yieldVenuePda: PublicKey;
+};
 
-async function main() {
-  process.env.ANCHOR_PROVIDER_URL ??= 'https://api.devnet.solana.com';
+function bn(value: bigint | number) {
+  return new anchor.BN(value.toString());
+}
+
+function bytes32Sequence(offset: number) {
+  return Array.from({ length: 32 }, (_, index) => (index + offset) & 0xff);
+}
+
+function loadIdl(name: string) {
+  const idlPath = resolve(ROOT, "target", "idl", `${name}.json`);
+  return JSON.parse(readFileSync(idlPath, "utf8"));
+}
+
+function providerPayer(provider: anchor.AnchorProvider) {
+  const payer = (provider.wallet as any).payer;
+  if (!payer) {
+    throw new Error("Anchor provider wallet does not expose a payer keypair.");
+  }
+
+  return payer as Keypair;
+}
+
+function deriveYieldVenuePda(programId: PublicKey, vaultStatePda: PublicKey, venue: PublicKey) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("yield_venue"), vaultStatePda.toBuffer(), venue.toBuffer()],
+    programId,
+  );
+}
+
+export async function initializeDevnetVault(): Promise<InitializedVault> {
+  process.env.ANCHOR_PROVIDER_URL ??= "https://api.devnet.solana.com";
   process.env.ANCHOR_WALLET ??= `${process.env.HOME}/.config/solana/id.json`;
 
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
+
   const authority = provider.wallet.publicKey;
-  const connection = provider.connection;
-
-  console.log('=== VaultProof Devnet Vault Initialization ===');
-  console.log(`Authority: ${authority.toBase58()}`);
-  console.log(`USDC Mint: ${TEST_USDC_MINT.toBase58()}`);
-
-  // Load vault IDL
-  const idlPath = resolve(process.cwd(), 'target/idl/vusd_vault.json');
-  let idl: any;
-  try {
-    idl = JSON.parse(readFileSync(idlPath, 'utf8'));
-  } catch {
-    console.error('IDL not found at', idlPath);
-    console.error('Run "anchor build" first to generate the IDL.');
-    process.exit(1);
-  }
-
+  const payer = providerPayer(provider);
+  const idl = loadIdl("vusd_vault");
   const vaultProgram = new anchor.Program(idl, provider);
 
-  // Derive PDAs
   const [vaultStatePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from('vault_state')],
-    VAULT_PROGRAM_ID,
+    [Buffer.from("vault_state")],
+    vaultProgram.programId,
   );
   const [usdcReservePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from('usdc_reserve')],
-    VAULT_PROGRAM_ID,
+    [Buffer.from("usdc_reserve")],
+    vaultProgram.programId,
+  );
+  const [yieldVenuePda] = deriveYieldVenuePda(
+    vaultProgram.programId,
+    vaultStatePda,
+    TEST_YIELD_VENUE,
   );
 
-  console.log(`Vault State PDA: ${vaultStatePda.toBase58()}`);
-  console.log(`USDC Reserve PDA: ${usdcReservePda.toBase58()}`);
+  let usdcMint = process.env.VAULTPROOF_TEST_USDC_MINT
+    ? new PublicKey(process.env.VAULTPROOF_TEST_USDC_MINT)
+    : undefined;
 
-  // Check if vault already initialized
-  const vaultInfo = await connection.getAccountInfo(vaultStatePda, 'confirmed');
-  if (vaultInfo) {
-    console.log('\nVault already initialized!');
-    console.log('Skipping initialization...');
-  } else {
-    console.log('\nInitializing vault...');
-
-    // Create the share mint keypair (needs to be a fresh keypair for init)
-    const shareMintKeypair = Keypair.generate();
-    console.log(`Share Mint: ${shareMintKeypair.publicKey.toBase58()}`);
-
-    // Regulator keys (test values — 32 bytes each)
-    const regulatorPubKeyX = Array.from({ length: 32 }, (_, i) => (i + 7) & 0xff);
-    const regulatorPubKeyY = Array.from({ length: 32 }, (_, i) => (i + 8) & 0xff);
-
-    try {
-      const tx = await (vaultProgram.methods as any)
-        .initializeVault(regulatorPubKeyX, regulatorPubKeyY)
-        .accounts({
-          vaultState: vaultStatePda,
-          usdcMint: TEST_USDC_MINT,
-          shareMint: shareMintKeypair.publicKey,
-          usdcReserve: usdcReservePda,
-          authority,
-          systemProgram: SystemProgram.programId,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .signers([shareMintKeypair])
-        .rpc();
-
-      console.log(`Vault initialized! Tx: ${tx}`);
-      console.log(`Share Mint: ${shareMintKeypair.publicKey.toBase58()}`);
-    } catch (err: any) {
-      console.error('Vault initialization failed:', err.message || err);
-      if (err.logs) {
-        console.error('Logs:', err.logs.slice(-10));
-      }
-      process.exit(1);
+  const existingVault = await provider.connection.getAccountInfo(vaultStatePda, "confirmed");
+  if (!existingVault) {
+    if (!usdcMint) {
+      usdcMint = await createMint(
+        provider.connection,
+        payer,
+        authority,
+        null,
+        6,
+      );
+      console.log(`Created test USDC mint: ${usdcMint.toBase58()}`);
     }
+
+    const shareMint = Keypair.generate();
+    const signature = await (vaultProgram.methods as any)
+      .initializeVault(bytes32Sequence(7), bytes32Sequence(8))
+      .accounts({
+        authority,
+        shareMint: shareMint.publicKey,
+        systemProgram: SystemProgram.programId,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        usdcMint,
+        usdcReserve: usdcReservePda,
+        vaultState: vaultStatePda,
+      })
+      .signers([shareMint])
+      .rpc();
+
+    console.log(`Vault initialized: ${signature}`);
+    console.log(`Share mint: ${shareMint.publicKey.toBase58()}`);
   }
 
-  // Fund the deployer with test USDC (if ATA exists and has low balance)
-  console.log('\n=== Checking Test USDC Balance ===');
-  try {
-    const ata = await getOrCreateAssociatedTokenAccount(
-      connection,
-      (provider.wallet as any).payer || Keypair.fromSecretKey(
-        Uint8Array.from(JSON.parse(readFileSync(`${process.env.HOME}/.config/solana/id.json`, 'utf8')))
-      ),
-      TEST_USDC_MINT,
-      authority,
+  let vaultState = await (vaultProgram.account as any).vaultState.fetch(vaultStatePda);
+  if (!vaultState.authority.equals(authority)) {
+    throw new Error(
+      `Vault authority is ${vaultState.authority.toBase58()}, but this script expects direct control by ${authority.toBase58()}. Use scripts/init-devnet-state.ts for the Squads-governed flow.`,
     );
-    const balance = Number(ata.amount) / 1_000_000;
-    console.log(`Test USDC balance: ${balance} USDC`);
-    console.log(`ATA: ${ata.address.toBase58()}`);
-  } catch (err: any) {
-    console.log('Could not fetch USDC balance:', err.message);
   }
 
-  // Verify KYC registry
-  console.log('\n=== Verifying KYC Registry ===');
-  const [registryPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from('kyc_registry')],
-    KYC_PROGRAM_ID,
-  );
-  const registryInfo = await connection.getAccountInfo(registryPda, 'confirmed');
-  console.log(`KYC Registry: ${registryPda.toBase58()} — ${registryInfo ? 'EXISTS' : 'NOT FOUND'}`);
+  usdcMint = new PublicKey(vaultState.usdcMint);
 
-  // Summary
-  console.log('\n=== Devnet Deployment Summary ===');
-  console.log('Programs:');
-  console.log(`  KYC Registry:    NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD`);
-  console.log(`  vUSD Vault:      CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu`);
-  console.log(`  Compliance Admin: BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K`);
-  console.log('Accounts:');
-  console.log(`  Vault State:     ${vaultStatePda.toBase58()}`);
-  console.log(`  USDC Reserve:    ${usdcReservePda.toBase58()}`);
-  console.log(`  KYC Registry:    ${registryPda.toBase58()}`);
-  console.log(`  Test USDC Mint:  ${TEST_USDC_MINT.toBase58()}`);
-  console.log(`  Authority:       ${authority.toBase58()}`);
+  await (vaultProgram.methods as any)
+    .updateRiskLimits(
+      bn(RISK_LIMITS.circuitBreakerThreshold),
+      bn(RISK_LIMITS.maxSingleTransaction),
+      bn(RISK_LIMITS.maxSingleDeposit),
+      RISK_LIMITS.maxDailyTransactions,
+    )
+    .accounts({
+      authority,
+      vaultState: vaultStatePda,
+    })
+    .rpc();
+
+  await (vaultProgram.methods as any)
+    .updateCustodyProvider({ selfCustody: {} }, authority)
+    .accounts({
+      authority,
+      vaultState: vaultStatePda,
+    })
+    .rpc();
+
+  const existingYieldVenue = await provider.connection.getAccountInfo(yieldVenuePda, "confirmed");
+  if (!existingYieldVenue) {
+    await (vaultProgram.methods as any)
+      .addYieldVenue(
+        TEST_YIELD_VENUE,
+        "Kamino Devnet",
+        bytes32Sequence(11),
+        6_500,
+        2,
+      )
+      .accounts({
+        authority,
+        systemProgram: SystemProgram.programId,
+        vaultState: vaultStatePda,
+        yieldVenue: yieldVenuePda,
+      })
+      .rpc();
+  }
+
+  vaultState = await (vaultProgram.account as any).vaultState.fetch(vaultStatePda);
+  if (BigInt(vaultState.totalYieldEarned.toString()) === 0n) {
+    await (vaultProgram.methods as any)
+      .accrueYield(bn(TEST_YIELD_AMOUNT))
+      .accounts({
+        authority,
+        vaultState: vaultStatePda,
+      })
+      .rpc();
+    vaultState = await (vaultProgram.account as any).vaultState.fetch(vaultStatePda);
+  }
+
+  await getOrCreateAssociatedTokenAccount(
+    provider.connection,
+    payer,
+    usdcMint,
+    authority,
+  );
+
+  return {
+    authority,
+    usdcMint,
+    usdcReservePda,
+    vaultProgram,
+    vaultState,
+    vaultStatePda,
+    yieldVenuePda,
+  };
 }
 
-void main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+async function main() {
+  const result = await initializeDevnetVault();
+
+  console.log("=== VaultProof Devnet Vault Initialization ===");
+  console.log(`Authority: ${result.authority.toBase58()}`);
+  console.log(`Vault program: ${result.vaultProgram.programId.toBase58()}`);
+  console.log(`Vault state: ${result.vaultStatePda.toBase58()}`);
+  console.log(`USDC reserve: ${result.usdcReservePda.toBase58()}`);
+  console.log(`USDC mint: ${result.usdcMint.toBase58()}`);
+  console.log(`Yield venue: ${result.yieldVenuePda.toBase58()}`);
+  console.log(`Circuit breaker threshold: ${result.vaultState.circuitBreakerThreshold.toString()}`);
+  console.log(`Total yield earned: ${result.vaultState.totalYieldEarned.toString()}`);
+}
+
+if (require.main === module) {
+  void main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

@@ -35,6 +35,8 @@ export const BASE8_RAW = [
     "5299619240641551281634865583518297030282874472190772894086521144482721001553",
     "16950150798460657717958625567821834550301663161624707787222815936182638968203",
 ];
+export const DEFAULT_SOURCE_OF_FUNDS_SEED = 12345n;
+export const DEFAULT_CREDENTIAL_VERSION = 1n;
 
 /**
  * Initialize all cryptographic primitives.
@@ -84,6 +86,47 @@ export function createRegulatorKeypair(crypto_ctx, privScalar) {
     };
 }
 
+export function defaultSourceOfFundsHash(crypto_ctx) {
+    const { poseidon, F } = crypto_ctx;
+    return F.toObject(poseidon([DEFAULT_SOURCE_OF_FUNDS_SEED]));
+}
+
+export function normalizeCredentialFields(crypto_ctx, fields) {
+    return {
+        ...fields,
+        sourceOfFundsHash: fields.sourceOfFundsHash ?? defaultSourceOfFundsHash(crypto_ctx),
+        credentialVersion: fields.credentialVersion ?? DEFAULT_CREDENTIAL_VERSION,
+    };
+}
+
+export function buildCredentialHash(crypto_ctx, fields) {
+    const { poseidon, F } = crypto_ctx;
+    const normalizedFields = normalizeCredentialFields(crypto_ctx, fields);
+
+    const credHash1 = poseidon([normalizedFields.name, normalizedFields.nationality]);
+    const credHash2 = poseidon([normalizedFields.dateOfBirth, normalizedFields.jurisdiction]);
+    const credHash3 = poseidon([
+        normalizedFields.accreditationStatus,
+        normalizedFields.credentialExpiry,
+    ]);
+    const credHash4 = poseidon([
+        normalizedFields.sourceOfFundsHash,
+        normalizedFields.credentialVersion,
+    ]);
+    const credHashFinal = poseidon([
+        F.toObject(credHash1),
+        F.toObject(credHash2),
+        F.toObject(credHash3),
+        F.toObject(credHash4),
+    ]);
+
+    return {
+        normalizedFields,
+        credHashFinal,
+        credHashFinalBigInt: F.toObject(credHashFinal),
+    };
+}
+
 /**
  * Create a credential with the given fields and sign it with the issuer key.
  *
@@ -95,28 +138,22 @@ export function createRegulatorKeypair(crypto_ctx, privScalar) {
  */
 export function createCredential(crypto_ctx, issuer, fields, identitySecret) {
     const { poseidon, eddsa, F } = crypto_ctx;
-
-    const credHash1 = poseidon([fields.name, fields.nationality]);
-    const credHash2 = poseidon([fields.dateOfBirth, fields.jurisdiction]);
-    const credHash3 = poseidon([fields.accreditationStatus, fields.credentialExpiry]);
-    const credHashFinal = poseidon([
-        F.toObject(credHash1),
-        F.toObject(credHash2),
-        F.toObject(credHash3),
-    ]);
-    const credHashFinalBigInt = F.toObject(credHashFinal);
+    const { normalizedFields, credHashFinal, credHashFinalBigInt } = buildCredentialHash(
+        crypto_ctx,
+        fields
+    );
 
     // Sign with issuer's key
     const signature = eddsa.signPoseidon(issuer.privKey, credHashFinal);
 
-    const walletPubkey = fields.walletPubkey ?? 0n;
+    const walletPubkey = normalizedFields.walletPubkey ?? 0n;
 
     // Compute leaf = Poseidon(credHashFinal, identitySecret, walletPubkey)
     const leaf = poseidon([credHashFinalBigInt, identitySecret, walletPubkey]);
     const leafBigInt = F.toObject(leaf);
 
     return {
-        ...fields,
+        ...normalizedFields,
         identitySecret,
         walletPubkey,
         credHashFinalBigInt,
@@ -135,25 +172,63 @@ export function createCredential(crypto_ctx, issuer, fields, identitySecret) {
 export function buildMerkleTree(crypto_ctx, leafValues) {
     const { poseidon, F } = crypto_ctx;
     const emptyNodes = [F.toObject(poseidon([0n]))];
-    for (let level = 1; level < TREE_DEPTH; level++) {
+    for (let level = 1; level <= TREE_DEPTH; level++) {
         emptyNodes.push(F.toObject(poseidon([emptyNodes[level - 1], emptyNodes[level - 1]])));
     }
 
-    const treeLevels = leafValues.map((leaf) => {
-        let current = leaf;
-        const pathElements = [];
-        const pathIndices = [];
+    if (leafValues.length === 0) {
+        return {
+            root: emptyNodes[TREE_DEPTH],
+            treeLevels: [{
+                root: emptyNodes[TREE_DEPTH],
+                pathElements: emptyNodes.slice(0, TREE_DEPTH),
+                pathIndices: Array(TREE_DEPTH).fill(0),
+            }],
+            emptyLeaf: emptyNodes[0],
+        };
+    }
 
-        for (let level = 0; level < TREE_DEPTH; level++) {
-            pathElements.push(emptyNodes[level]);
-            pathIndices.push(0);
-            current = F.toObject(poseidon([current, emptyNodes[level]]));
+    const treeLevels = leafValues.map(() => ({
+        pathElements: [],
+        pathIndices: [],
+    }));
+    const proofNodeIndices = leafValues.map((_, index) => index);
+    let levelNodes = new Map(leafValues.map((leaf, index) => [index, leaf]));
+
+    for (let level = 0; level < TREE_DEPTH; level++) {
+        for (let leafIndex = 0; leafIndex < leafValues.length; leafIndex++) {
+            const nodeIndex = proofNodeIndices[leafIndex];
+            const siblingIndex = nodeIndex ^ 1;
+
+            treeLevels[leafIndex].pathElements.push(
+                levelNodes.get(siblingIndex) ?? emptyNodes[level]
+            );
+            treeLevels[leafIndex].pathIndices.push(nodeIndex & 1);
+            proofNodeIndices[leafIndex] = nodeIndex >> 1;
         }
 
-        return { root: current, pathElements, pathIndices };
-    });
+        const parentIndices = new Set();
+        for (const nodeIndex of levelNodes.keys()) {
+            parentIndices.add(nodeIndex >> 1);
+        }
 
-    return { root: treeLevels[0]?.root ?? emptyNodes[TREE_DEPTH - 1], treeLevels, emptyLeaf: emptyNodes[0] };
+        const nextLevelNodes = new Map();
+        for (const parentIndex of parentIndices) {
+            const leftIndex = parentIndex * 2;
+            const rightIndex = leftIndex + 1;
+            const left = levelNodes.get(leftIndex) ?? emptyNodes[level];
+            const right = levelNodes.get(rightIndex) ?? emptyNodes[level];
+            nextLevelNodes.set(parentIndex, F.toObject(poseidon([left, right])));
+        }
+        levelNodes = nextLevelNodes;
+    }
+
+    const root = levelNodes.get(0) ?? emptyNodes[TREE_DEPTH];
+    for (const proof of treeLevels) {
+        proof.root = root;
+    }
+
+    return { root, treeLevels, emptyLeaf: emptyNodes[0] };
 }
 
 /**
@@ -239,6 +314,8 @@ export function buildCircuitInput(opts) {
         jurisdiction: credential.jurisdiction.toString(),
         accreditationStatus: credential.accreditationStatus.toString(),
         credentialExpiry: credential.credentialExpiry.toString(),
+        sourceOfFundsHash: credential.sourceOfFundsHash.toString(),
+        credentialVersion: credential.credentialVersion.toString(),
         identitySecret: credential.identitySecret.toString(),
 
         issuerSigR8x: credential.sigR8x.toString(),

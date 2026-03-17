@@ -210,6 +210,107 @@ fn refresh_share_price(vault: &mut VaultState) -> Result<()> {
     Ok(())
 }
 
+fn enforce_deposit_limit(vault: &VaultState, amount: u64) -> Result<()> {
+    require!(
+        amount <= vault.max_single_deposit,
+        VaultError::ExceedsDepositLimit
+    );
+    Ok(())
+}
+
+fn check_risk_controls(
+    vault: &mut VaultState,
+    amount: u64,
+    is_outflow: bool,
+    clock: &Clock,
+) -> Result<()> {
+    require!(!vault.paused, VaultError::VaultPaused);
+    require!(
+        amount <= vault.max_single_transaction,
+        VaultError::ExceedsTransactionLimit
+    );
+
+    if clock.unix_timestamp - vault.outflow_window_start >= 86_400 {
+        vault.daily_outflow_total = 0;
+        vault.daily_transaction_count = 0;
+        vault.outflow_window_start = clock.unix_timestamp;
+    }
+
+    require!(
+        vault.daily_transaction_count < vault.max_daily_transactions,
+        VaultError::VelocityLimitExceeded
+    );
+    vault.daily_transaction_count = vault
+        .daily_transaction_count
+        .checked_add(1)
+        .ok_or(VaultError::Overflow)?;
+
+    if is_outflow {
+        let new_total = vault
+            .daily_outflow_total
+            .checked_add(amount)
+            .ok_or(VaultError::Overflow)?;
+        if new_total > vault.circuit_breaker_threshold {
+            vault.paused = true;
+            emit!(CircuitBreakerTriggered {
+                daily_outflow: new_total,
+                threshold: vault.circuit_breaker_threshold,
+                timestamp: clock.unix_timestamp,
+            });
+            emit!(VaultPaused {
+                reason: "Circuit breaker triggered".to_string(),
+                timestamp: clock.unix_timestamp,
+            });
+            return Err(VaultError::CircuitBreakerTriggered.into());
+        }
+        vault.daily_outflow_total = new_total;
+    }
+
+    Ok(())
+}
+
+fn apply_risk_limit_update(
+    vault: &mut VaultState,
+    circuit_breaker_threshold: u64,
+    max_single_transaction: u64,
+    max_single_deposit: u64,
+    max_daily_transactions: u32,
+) {
+    vault.circuit_breaker_threshold = circuit_breaker_threshold;
+    vault.max_single_transaction = max_single_transaction;
+    vault.max_single_deposit = max_single_deposit;
+    vault.max_daily_transactions = max_daily_transactions;
+}
+
+fn apply_unpause(vault: &mut VaultState, timestamp: i64) {
+    vault.paused = false;
+    vault.daily_outflow_total = 0;
+    vault.daily_transaction_count = 0;
+    vault.outflow_window_start = timestamp;
+}
+
+fn apply_custody_provider_update(
+    vault: &mut VaultState,
+    provider: CustodyProvider,
+    custody_authority: Pubkey,
+) {
+    vault.custody_provider = provider;
+    vault.custody_authority = custody_authority;
+}
+
+fn apply_accrue_yield(vault: &mut VaultState, yield_amount: u64) -> Result<()> {
+    vault.total_assets = vault
+        .total_assets
+        .checked_add(yield_amount)
+        .ok_or(VaultError::Overflow)?;
+    vault.total_yield_earned = vault
+        .total_yield_earned
+        .checked_add(yield_amount)
+        .ok_or(VaultError::Overflow)?;
+    refresh_share_price(vault)?;
+    Ok(())
+}
+
 fn authorize_transfer_record_decryption(record: &mut TransferRecord) -> Result<()> {
     record.decryption_authorized = true;
     Ok(())
@@ -269,6 +370,16 @@ pub mod vusd_vault {
         vault.regulator_pubkey_y = regulator_pub_key_y;
         vault.bump = ctx.bumps.vault_state;
         vault.reserve_bump = ctx.bumps.usdc_reserve;
+        vault.custody_provider = CustodyProvider::SelfCustody;
+        vault.custody_authority = ctx.accounts.authority.key();
+        vault.paused = false;
+        vault.circuit_breaker_threshold = u64::MAX;
+        vault.daily_outflow_total = 0;
+        vault.outflow_window_start = Clock::get()?.unix_timestamp;
+        vault.max_single_transaction = u64::MAX;
+        vault.max_single_deposit = u64::MAX;
+        vault.max_daily_transactions = u32::MAX;
+        vault.daily_transaction_count = 0;
 
         Ok(())
     }
@@ -292,6 +403,13 @@ pub mod vusd_vault {
     }
 
     pub fn deposit_with_proof(ctx: Context<DepositWithProof>, amount: u64) -> Result<()> {
+        let clock = Clock::get()?;
+        {
+            let vault_state = &mut ctx.accounts.vault_state;
+            check_risk_controls(vault_state, amount, false, &clock)?;
+            enforce_deposit_limit(vault_state, amount)?;
+        }
+
         let buffer = &ctx.accounts.proof_buffer;
         verify_proof(
             &buffer.proof_a,
@@ -306,7 +424,7 @@ pub mod vusd_vault {
             &buffer.public_inputs,
             registry_root,
             amount,
-            Clock::get()?.unix_timestamp,
+            clock.unix_timestamp,
             &ctx.accounts.vault_state,
             &ctx.accounts.user.key(),
             &encrypted_metadata,
@@ -375,6 +493,9 @@ pub mod vusd_vault {
     }
 
     pub fn transfer_with_proof(ctx: Context<TransferWithProof>, amount: u64) -> Result<()> {
+        let clock = Clock::get()?;
+        check_risk_controls(&mut ctx.accounts.vault_state, amount, false, &clock)?;
+
         let buffer = &ctx.accounts.proof_buffer;
         verify_proof(
             &buffer.proof_a,
@@ -389,7 +510,7 @@ pub mod vusd_vault {
             &buffer.public_inputs,
             registry_root,
             amount,
-            Clock::get()?.unix_timestamp,
+            clock.unix_timestamp,
             &ctx.accounts.vault_state,
             &ctx.accounts.sender.key(),
             &encrypted_metadata,
@@ -427,6 +548,9 @@ pub mod vusd_vault {
     }
 
     pub fn withdraw_with_proof(ctx: Context<WithdrawWithProof>, amount: u64) -> Result<()> {
+        let clock = Clock::get()?;
+        check_risk_controls(&mut ctx.accounts.vault_state, amount, true, &clock)?;
+
         let buffer = &ctx.accounts.proof_buffer;
         verify_proof(
             &buffer.proof_a,
@@ -441,7 +565,7 @@ pub mod vusd_vault {
             &buffer.public_inputs,
             registry_root,
             amount,
-            Clock::get()?.unix_timestamp,
+            clock.unix_timestamp,
             &ctx.accounts.vault_state,
             &ctx.accounts.stealth_owner.key(),
             &encrypted_metadata,
@@ -624,9 +748,97 @@ pub mod vusd_vault {
         Ok(())
     }
 
+    pub fn update_risk_limits(
+        ctx: Context<AdminUpdate>,
+        circuit_breaker_threshold: u64,
+        max_single_transaction: u64,
+        max_single_deposit: u64,
+        max_daily_transactions: u32,
+    ) -> Result<()> {
+        apply_risk_limit_update(
+            &mut ctx.accounts.vault_state,
+            circuit_breaker_threshold,
+            max_single_transaction,
+            max_single_deposit,
+            max_daily_transactions,
+        );
+        Ok(())
+    }
+
+    pub fn unpause_vault(ctx: Context<AdminUpdate>) -> Result<()> {
+        let clock = Clock::get()?;
+        apply_unpause(&mut ctx.accounts.vault_state, clock.unix_timestamp);
+        emit!(VaultUnpaused {
+            timestamp: clock.unix_timestamp,
+        });
+        Ok(())
+    }
+
+    pub fn update_custody_provider(
+        ctx: Context<AdminUpdate>,
+        provider: CustodyProvider,
+        custody_authority: Pubkey,
+    ) -> Result<()> {
+        apply_custody_provider_update(&mut ctx.accounts.vault_state, provider, custody_authority);
+        Ok(())
+    }
+
+    pub fn add_yield_venue(
+        ctx: Context<AddYieldVenue>,
+        venue_address: Pubkey,
+        name: String,
+        jurisdiction_whitelist: [u8; 32],
+        allocation_cap_bps: u16,
+        risk_rating: u8,
+    ) -> Result<()> {
+        let venue = &mut ctx.accounts.yield_venue;
+        venue.venue_address = venue_address;
+        venue.name = name;
+        venue.jurisdiction_whitelist = jurisdiction_whitelist;
+        venue.allocation_cap_bps = allocation_cap_bps;
+        venue.active = true;
+        venue.risk_rating = risk_rating;
+        venue.bump = ctx.bumps.yield_venue;
+
+        if ctx.accounts.vault_state.yield_source == Pubkey::default() {
+            ctx.accounts.vault_state.yield_source = venue_address;
+        }
+
+        Ok(())
+    }
+
+    pub fn remove_yield_venue(ctx: Context<RemoveYieldVenue>) -> Result<()> {
+        if ctx.accounts.vault_state.yield_source == ctx.accounts.yield_venue.venue_address {
+            ctx.accounts.vault_state.yield_source = Pubkey::default();
+        }
+        Ok(())
+    }
+
+    pub fn accrue_yield(ctx: Context<AccrueYield>, yield_amount: u64) -> Result<()> {
+        let clock = Clock::get()?;
+        let vault = &mut ctx.accounts.vault_state;
+        apply_accrue_yield(vault, yield_amount)?;
+        emit!(YieldAccrued {
+            amount: yield_amount,
+            new_total_assets: vault.total_assets,
+            new_share_price_numerator: vault.share_price_numerator,
+            new_share_price_denominator: vault.share_price_denominator,
+            timestamp: clock.unix_timestamp,
+        });
+        Ok(())
+    }
+
     pub fn mark_decryption_authorized(ctx: Context<MarkDecryptionAuthorized>) -> Result<()> {
         authorize_transfer_record_decryption(&mut ctx.accounts.transfer_record)
     }
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, InitSpace)]
+pub enum CustodyProvider {
+    SelfCustody,
+    Fireblocks,
+    BitGo,
+    Anchorage,
 }
 
 #[account]
@@ -650,6 +862,29 @@ pub struct VaultState {
     pub regulator_pubkey_y: [u8; 32],
     pub bump: u8,
     pub reserve_bump: u8,
+    pub custody_provider: CustodyProvider,
+    pub custody_authority: Pubkey,
+    pub paused: bool,
+    pub circuit_breaker_threshold: u64,
+    pub daily_outflow_total: u64,
+    pub outflow_window_start: i64,
+    pub max_single_transaction: u64,
+    pub max_single_deposit: u64,
+    pub max_daily_transactions: u32,
+    pub daily_transaction_count: u32,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct WhitelistedYieldVenue {
+    pub venue_address: Pubkey,
+    #[max_len(32)]
+    pub name: String,
+    pub jurisdiction_whitelist: [u8; 32],
+    pub allocation_cap_bps: u16,
+    pub active: bool,
+    pub risk_rating: u8,
+    pub bump: u8,
 }
 
 #[account]
@@ -826,6 +1061,7 @@ pub struct DepositWithProof<'info> {
 #[derive(Accounts)]
 pub struct TransferWithProof<'info> {
     #[account(
+        mut,
         seeds = [b"vault_state"],
         bump = vault_state.bump,
     )]
@@ -1039,6 +1275,71 @@ pub struct AdminUpdate<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(venue_address: Pubkey)]
+pub struct AddYieldVenue<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+        has_one = authority @ VaultError::Unauthorized,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + WhitelistedYieldVenue::INIT_SPACE,
+        seeds = [b"yield_venue", vault_state.key().as_ref(), venue_address.as_ref()],
+        bump,
+    )]
+    pub yield_venue: Account<'info, WhitelistedYieldVenue>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct RemoveYieldVenue<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+        has_one = authority @ VaultError::Unauthorized,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        mut,
+        close = authority,
+        seeds = [
+            b"yield_venue",
+            vault_state.key().as_ref(),
+            yield_venue.venue_address.as_ref(),
+        ],
+        bump = yield_venue.bump,
+    )]
+    pub yield_venue: Account<'info, WhitelistedYieldVenue>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct AccrueYield<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+        has_one = authority @ VaultError::Unauthorized,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
 pub struct MarkDecryptionAuthorized<'info> {
     #[account(
         mut,
@@ -1090,6 +1391,33 @@ pub struct EmergencyExecuted {
     pub amount: u64,
 }
 
+#[event]
+pub struct CircuitBreakerTriggered {
+    pub daily_outflow: u64,
+    pub threshold: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct VaultPaused {
+    pub reason: String,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct VaultUnpaused {
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct YieldAccrued {
+    pub amount: u64,
+    pub new_total_assets: u64,
+    pub new_share_price_numerator: u64,
+    pub new_share_price_denominator: u64,
+    pub timestamp: i64,
+}
+
 #[error_code]
 pub enum VaultError {
     #[msg("Invalid proof format.")]
@@ -1114,6 +1442,20 @@ pub enum VaultError {
     EncryptedMetadataMismatch,
     #[msg("Invalid mint address.")]
     InvalidMint,
+    #[msg("Vault is paused")]
+    VaultPaused,
+    #[msg("Circuit breaker triggered")]
+    CircuitBreakerTriggered,
+    #[msg("Exceeds single transaction limit")]
+    ExceedsTransactionLimit,
+    #[msg("Exceeds deposit concentration limit")]
+    ExceedsDepositLimit,
+    #[msg("Velocity limit exceeded")]
+    VelocityLimitExceeded,
+    #[msg("Exceeds liquid buffer")]
+    ExceedsLiquidBuffer,
+    #[msg("Invalid custody provider")]
+    InvalidCustodyProvider,
     #[msg("Arithmetic overflow.")]
     Overflow,
     #[msg("Arithmetic underflow.")]
@@ -1166,6 +1508,26 @@ mod tests {
             regulator_pubkey_y: [8u8; 32],
             bump: 1,
             reserve_bump: 2,
+            custody_provider: CustodyProvider::SelfCustody,
+            custody_authority: Pubkey::new_unique(),
+            paused: false,
+            circuit_breaker_threshold: u64::MAX,
+            daily_outflow_total: 0,
+            outflow_window_start: 1_763_077_200,
+            max_single_transaction: u64::MAX,
+            max_single_deposit: u64::MAX,
+            max_daily_transactions: u32::MAX,
+            daily_transaction_count: 0,
+        }
+    }
+
+    fn sample_clock(timestamp: i64) -> Clock {
+        Clock {
+            slot: 0,
+            epoch_start_timestamp: 0,
+            epoch: 0,
+            leader_schedule_epoch: 0,
+            unix_timestamp: timestamp,
         }
     }
 
@@ -1466,6 +1828,198 @@ mod tests {
         authorize_transfer_record_decryption(&mut record).unwrap();
 
         assert!(record.decryption_authorized);
+    }
+
+    #[test]
+    fn risk_paused_vault_rejects() {
+        let mut vault = sample_vault_state();
+        vault.paused = true;
+
+        let err =
+            check_risk_controls(&mut vault, 10, false, &sample_clock(1_763_077_200)).unwrap_err();
+
+        assert_error_name(err, "VaultPaused");
+    }
+
+    #[test]
+    fn risk_exceeds_single_transaction_limit_rejects() {
+        let mut vault = sample_vault_state();
+        vault.max_single_transaction = 100;
+
+        let err =
+            check_risk_controls(&mut vault, 101, false, &sample_clock(1_763_077_200)).unwrap_err();
+
+        assert_error_name(err, "ExceedsTransactionLimit");
+    }
+
+    #[test]
+    fn risk_velocity_limit_reached_rejects() {
+        let mut vault = sample_vault_state();
+        vault.max_daily_transactions = 2;
+        vault.daily_transaction_count = 2;
+
+        let err =
+            check_risk_controls(&mut vault, 10, false, &sample_clock(1_763_077_200)).unwrap_err();
+
+        assert_error_name(err, "VelocityLimitExceeded");
+    }
+
+    #[test]
+    fn risk_circuit_breaker_triggers_and_sets_paused() {
+        let mut vault = sample_vault_state();
+        vault.circuit_breaker_threshold = 100;
+        vault.daily_outflow_total = 90;
+
+        let err =
+            check_risk_controls(&mut vault, 11, true, &sample_clock(1_763_077_200)).unwrap_err();
+
+        assert_error_name(err, "CircuitBreakerTriggered");
+        assert!(vault.paused);
+        assert_eq!(vault.daily_outflow_total, 90);
+    }
+
+    #[test]
+    fn risk_rolling_window_resets_after_24h() {
+        let mut vault = sample_vault_state();
+        vault.outflow_window_start = 1_763_000_000;
+        vault.daily_outflow_total = 55;
+        vault.max_daily_transactions = 2;
+        vault.daily_transaction_count = 2;
+        let clock = sample_clock(vault.outflow_window_start + 86_400);
+
+        check_risk_controls(&mut vault, 10, false, &clock).unwrap();
+
+        assert_eq!(vault.daily_outflow_total, 0);
+        assert_eq!(vault.daily_transaction_count, 1);
+        assert_eq!(vault.outflow_window_start, clock.unix_timestamp);
+    }
+
+    #[test]
+    fn risk_outflow_below_threshold_passes() {
+        let mut vault = sample_vault_state();
+        vault.circuit_breaker_threshold = 100;
+        vault.daily_outflow_total = 80;
+
+        check_risk_controls(&mut vault, 20, true, &sample_clock(1_763_077_200)).unwrap();
+
+        assert_eq!(vault.daily_outflow_total, 100);
+        assert_eq!(vault.daily_transaction_count, 1);
+        assert!(!vault.paused);
+    }
+
+    #[test]
+    fn risk_non_outflow_does_not_check_circuit_breaker() {
+        let mut vault = sample_vault_state();
+        vault.circuit_breaker_threshold = 50;
+        vault.daily_outflow_total = 40;
+
+        check_risk_controls(&mut vault, 75, false, &sample_clock(1_763_077_200)).unwrap();
+
+        assert_eq!(vault.daily_outflow_total, 40);
+        assert_eq!(vault.daily_transaction_count, 1);
+        assert!(!vault.paused);
+    }
+
+    #[test]
+    fn risk_deposit_concentration_limit_rejects() {
+        let mut vault = sample_vault_state();
+        vault.max_single_deposit = 25;
+
+        let err = enforce_deposit_limit(&vault, 26).unwrap_err();
+
+        assert_error_name(err, "ExceedsDepositLimit");
+    }
+
+    #[test]
+    fn risk_deposit_concentration_limit_accepts_allowed_amount() {
+        let mut vault = sample_vault_state();
+        vault.max_single_deposit = 25;
+
+        enforce_deposit_limit(&vault, 25).unwrap();
+    }
+
+    #[test]
+    fn admin_unpause_resets_all_counters() {
+        let mut vault = sample_vault_state();
+        vault.paused = true;
+        vault.daily_outflow_total = 500;
+        vault.daily_transaction_count = 12;
+
+        apply_unpause(&mut vault, 1_763_155_555);
+
+        assert!(!vault.paused);
+        assert_eq!(vault.daily_outflow_total, 0);
+        assert_eq!(vault.daily_transaction_count, 0);
+        assert_eq!(vault.outflow_window_start, 1_763_155_555);
+    }
+
+    #[test]
+    fn admin_update_risk_limits_sets_all_fields() {
+        let mut vault = sample_vault_state();
+
+        apply_risk_limit_update(&mut vault, 1_000, 250, 125, 16);
+
+        assert_eq!(vault.circuit_breaker_threshold, 1_000);
+        assert_eq!(vault.max_single_transaction, 250);
+        assert_eq!(vault.max_single_deposit, 125);
+        assert_eq!(vault.max_daily_transactions, 16);
+    }
+
+    #[test]
+    fn custody_update_provider_sets_provider_and_authority() {
+        let mut vault = sample_vault_state();
+        let custody_authority = Pubkey::new_unique();
+
+        apply_custody_provider_update(&mut vault, CustodyProvider::Anchorage, custody_authority);
+
+        assert_eq!(vault.custody_provider, CustodyProvider::Anchorage);
+        assert_eq!(vault.custody_authority, custody_authority);
+    }
+
+    #[test]
+    fn custody_provider_serialization_roundtrip() {
+        let provider = CustodyProvider::BitGo;
+        let encoded = provider.try_to_vec().unwrap();
+        let decoded = CustodyProvider::try_from_slice(&encoded).unwrap();
+
+        assert_eq!(decoded, provider);
+    }
+
+    #[test]
+    fn yield_accrue_increases_total_assets_and_share_price() {
+        let mut vault = sample_vault_state();
+        vault.total_assets = 10_000;
+        vault.total_shares = 10_000;
+        vault.share_price_numerator = 1;
+        vault.share_price_denominator = 1;
+
+        apply_accrue_yield(&mut vault, 500).unwrap();
+
+        assert_eq!(vault.total_assets, 10_500);
+        assert_eq!(vault.share_price_numerator, 10_500);
+        assert_eq!(vault.share_price_denominator, 10_000);
+    }
+
+    #[test]
+    fn yield_accrue_share_price_calculation_correct_after_yield() {
+        let mut vault = sample_vault_state();
+        vault.total_assets = 25_000;
+        vault.total_shares = 20_000;
+
+        apply_accrue_yield(&mut vault, 5_000).unwrap();
+
+        assert_eq!(vault.share_price_numerator, 30_000);
+        assert_eq!(vault.share_price_denominator, 20_000);
+    }
+
+    #[test]
+    fn yield_accrue_tracks_total_yield_earned() {
+        let mut vault = sample_vault_state();
+        vault.total_yield_earned = 700;
+
+        apply_accrue_yield(&mut vault, 300).unwrap();
+
+        assert_eq!(vault.total_yield_earned, 1_000);
     }
 
     #[test]

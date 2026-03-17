@@ -20,4 +20,8 @@ describe("tokenized vault shares", function () {
   it("runs the share-accounting unit tests", () => {
     run("cargo", ["test", "-p", "vusd-vault", "share_", "--", "--nocapture"]);
   });
+
+  it("runs the yield-accounting unit tests", () => {
+    run("cargo", ["test", "-p", "vusd-vault", "yield_", "--", "--nocapture"]);
+  });
 });

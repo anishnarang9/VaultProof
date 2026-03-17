@@ -23,6 +23,8 @@ export function buildCircuitInput(params: CircuitInputParams) {
     jurisdiction: params.jurisdiction.toString(),
     accreditationStatus: params.accreditationStatus.toString(),
     credentialExpiry: params.credentialExpiry.toString(),
+    sourceOfFundsHash: params.sourceOfFundsHash.toString(),
+    credentialVersion: params.credentialVersion.toString(),
     identitySecret: params.identitySecret.toString(),
     issuerSigR8x: params.issuerSignature.R8[0].toString(),
     issuerSigR8y: params.issuerSignature.R8[1].toString(),

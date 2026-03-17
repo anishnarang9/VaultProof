@@ -1,167 +1,152 @@
-import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { useMemo, useState } from 'react';
-import PageContainer from '../components/layout/PageContainer';
-import { useRegistryState } from '../hooks/useRegistryState';
-import { useTransferRecords } from '../hooks/useTransferRecords';
-import { useVaultState } from '../hooks/useVaultState';
+import { startTransition, useDeferredValue, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  Alert,
+  Badge,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Input,
+  Select,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/primitives';
+import { useInstitutionalData } from '../hooks/useInstitutionalData';
+import { useMonitoring } from '../hooks/useMonitoring';
 import { formatCurrency, formatDateTime, shorten } from '../lib/format';
-import { buildAuthorizeDecryptionTx, getPrograms } from '../lib/program';
+
+type SortKey = 'amount' | 'timestamp' | 'type';
 
 export default function Compliance() {
-  const { data: vault } = useVaultState();
-  const { data: registry } = useRegistryState();
-  const { records, refresh } = useTransferRecords();
-  const { connection } = useConnection();
-  const anchorWallet = useAnchorWallet();
-  const { publicKey, sendTransaction } = useWallet();
-  const programs = useMemo(
-    () => (anchorWallet ? getPrograms(connection, anchorWallet) : null),
-    [anchorWallet, connection],
-  );
-  const [status, setStatus] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const { records, usingMockRecords } = useInstitutionalData();
+  const { alerts } = useMonitoring();
+  const [query, setQuery] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey>('timestamp');
+  const [typeFilter, setTypeFilter] = useState<'All' | 'Deposit' | 'Transfer' | 'Withdrawal'>('All');
+  const deferredQuery = useDeferredValue(query);
 
-  const handleAuthorize = async (transferRecord: typeof records[number]['address']) => {
-    if (!programs || !publicKey || !sendTransaction) {
-      setStatus('Connect the compliance authority wallet to authorize decryption.');
-      return;
-    }
+  const filteredRecords = useMemo(() => {
+    const normalizedQuery = deferredQuery.trim().toLowerCase();
+    const nextRecords = records
+      .filter((record) => (typeFilter === 'All' ? true : record.transferType === typeFilter))
+      .filter((record) => {
+        if (!normalizedQuery) {
+          return true;
+        }
 
-    try {
-      const transaction = await buildAuthorizeDecryptionTx({
-        program: programs.complianceAdmin,
-        signer: publicKey,
-        transferRecord,
+        return [
+          record.transferType,
+          record.signer.toBase58(),
+          shorten(record.proofHash, 10, 8),
+        ]
+          .join(' ')
+          .toLowerCase()
+          .includes(normalizedQuery);
       });
-      const signature = await sendTransaction(transaction, connection);
-      await connection.confirmTransaction(signature, 'confirmed');
-      await refresh();
-      setStatus(`Decryption authorization submitted: ${signature}`);
-    } catch (caughtError) {
-      setStatus(
-        caughtError instanceof Error ? caughtError.message : 'Unable to authorize decryption.',
-      );
-    }
-  };
+
+    return nextRecords.sort((left, right) => {
+      if (sortKey === 'amount') {
+        return Number(right.amount.toString()) - Number(left.amount.toString());
+      }
+
+      if (sortKey === 'type') {
+        return left.transferType.localeCompare(right.transferType);
+      }
+
+      return Number(right.timestamp.toString()) - Number(left.timestamp.toString());
+    });
+  }, [deferredQuery, records, sortKey, typeFilter]);
 
   return (
-    <PageContainer>
-      <section className="page-header">
-        <div>
-          <p className="eyebrow">Compliance view</p>
-          <h1>Confidential identity, visible audit trail</h1>
-          <p>
-            VaultProof keeps identities and credential data off-chain while exposing balances,
-            transfer records, thresholds, and review policy to the chain.
-          </p>
-        </div>
-      </section>
+    <div className="grid gap-6">
+      {alerts.length > 0 ? (
+        <Alert
+          description={alerts.map((alert) => alert.message).join(' • ')}
+          title="Monitoring alerts are active"
+          variant={alerts.some((alert) => alert.severity === 'critical') ? 'destructive' : 'warning'}
+        />
+      ) : null}
 
-      <section className="section-grid">
-        <article className="panel panel-stack">
-          <div>
-            <p className="eyebrow">What is confidential</p>
-            <h2>Hidden by design</h2>
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <Badge variant="secondary">Compliance Monitoring</Badge>
+              <CardTitle className="mt-3">Transfer record explorer</CardTitle>
+              <CardDescription>
+                Sortable investigation queue with proof hashes, signer identities, and decryption status.
+              </CardDescription>
+            </div>
+            <Badge variant={usingMockRecords ? 'warning' : 'success'}>
+              {usingMockRecords ? 'Demo fallback records' : 'Live transfer records'}
+            </Badge>
           </div>
-          <ul className="list">
-            <li>Identity and KYC source documents never hit the chain.</li>
-            <li>Credential details such as accreditation and jurisdiction stay inside the witness.</li>
-            <li>The travel rule payload is encrypted for regulated review.</li>
-          </ul>
-        </article>
-
-        <article className="panel panel-stack">
-          <div>
-            <p className="eyebrow">What remains visible</p>
-            <h2>Public by necessity</h2>
-          </div>
-          <ul className="list">
-            <li>Vault share balances on stealth accounts remain visible for institutional reporting.</li>
-            <li>TransferRecord accounts are public and auditable.</li>
-            <li>Emergency withdrawals expose their 72-hour review window.</li>
-          </ul>
-        </article>
-      </section>
-
-      <section className="section-grid section-grid-wide">
-        <article className="panel panel-stack">
-          <div>
-            <p className="eyebrow">Registry and vault posture</p>
-            <h2>Current control plane</h2>
-          </div>
-          <dl className="detail-list">
-            <div>
-              <dt>Merkle root</dt>
-              <dd className="mono-copy">{registry.merkleRootHex || 'Unavailable'}</dd>
-            </div>
-            <div>
-              <dt>Active credentials</dt>
-              <dd>{registry.activeCredentials.toString()}</dd>
-            </div>
-            <div>
-              <dt>Emergency timelock</dt>
-              <dd>{Math.floor(Number(vault.emergencyTimelock.toString()) / 3600)} hours</dd>
-            </div>
-            <div>
-              <dt>Retail threshold</dt>
-              <dd>{formatCurrency(vault.thresholds.retail)}</dd>
-            </div>
-          </dl>
-          {status ? <p className="inline-note">{status}</p> : null}
-        </article>
-
-        <article className="panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Recent public records</p>
-              <h2>TransferRecord feed</h2>
-            </div>
+        </CardHeader>
+        <CardContent className="grid gap-4">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_180px]">
+            <Input
+              onChange={(event) => {
+                startTransition(() => setQuery(event.target.value));
+              }}
+              placeholder="Search signer, proof hash, or type"
+              value={query}
+            />
+            <Select onChange={(event) => setTypeFilter(event.target.value as typeof typeFilter)} value={typeFilter}>
+              <option value="All">All types</option>
+              <option value="Deposit">Deposit</option>
+              <option value="Transfer">Transfer</option>
+              <option value="Withdrawal">Withdrawal</option>
+            </Select>
+            <Select onChange={(event) => setSortKey(event.target.value as SortKey)} value={sortKey}>
+              <option value="timestamp">Newest first</option>
+              <option value="amount">Largest amount</option>
+              <option value="type">Type</option>
+            </Select>
           </div>
 
-          {records.length === 0 ? (
-            <div className="empty-state">
-              <p>No transfer records were returned by the connected cluster.</p>
-            </div>
-          ) : (
-            <div className="table-wrap">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Type</th>
-                    <th>Time</th>
-                    <th>Proof hash</th>
-                    <th>Authorized</th>
-                    <th>Metadata</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {records.slice(0, 6).map((record) => (
-                    <tr key={record.address.toBase58()}>
-                      <td>{record.transferType}</td>
-                      <td>{formatDateTime(record.timestamp)}</td>
-                      <td>{shorten(record.proofHash, 8, 8)}</td>
-                      <td>{record.decryptionAuthorized ? 'Authorized' : 'Restricted'}</td>
-                      <td>{shorten(record.encryptedMetadata, 8, 8)}</td>
-                      <td>
-                        <button
-                          className="button button-secondary"
-                          disabled={record.decryptionAuthorized || !publicKey}
-                          onClick={() => {
-                            void handleAuthorize(record.address);
-                          }}
-                          type="button"
-                        >
-                          {record.decryptionAuthorized ? 'Authorized' : 'Authorize'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </article>
-      </section>
-    </PageContainer>
+          <div className="overflow-x-auto rounded-[calc(var(--radius)*2)] border border-border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead>Timestamp</TableHead>
+                  <TableHead>Signer</TableHead>
+                  <TableHead>Proof Hash</TableHead>
+                  <TableHead>Decryption</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredRecords.map((record) => (
+                  <TableRow
+                    key={record.address.toBase58()}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/developer/compliance/${record.address.toBase58()}`)}
+                  >
+                    <TableCell className="text-text-primary">{record.transferType}</TableCell>
+                    <TableCell>{formatCurrency(record.amount)}</TableCell>
+                    <TableCell>{formatDateTime(record.timestamp)}</TableCell>
+                    <TableCell className="font-mono text-xs">{shorten(record.signer)}</TableCell>
+                    <TableCell className="font-mono text-xs">{shorten(record.proofHash, 10, 8)}</TableCell>
+                    <TableCell>
+                      <Badge variant={record.decryptionAuthorized ? 'success' : 'warning'}>
+                        {record.decryptionAuthorized ? 'Authorized' : 'Pending'}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

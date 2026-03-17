@@ -1,9 +1,23 @@
 import { useState } from 'react';
 import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
-import PageContainer from '../components/layout/PageContainer';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Input,
+  Label,
+  Select,
+} from '../components/ui/primitives';
+import { useToast } from '../components/ui/primitives';
 import { useCredential } from '../hooks/useCredential';
 import { useRegistryState } from '../hooks/useRegistryState';
-import { hashCredentialLeaf } from '../lib/credential';
+import { bigintToHex, textToField } from '../lib/crypto';
+import { hashCredentialLeaf, prepareStoredCredential } from '../lib/credential';
 import { buildAddCredentialTx, getPrograms } from '../lib/program';
 import type { AccreditationTier } from '../lib/types';
 
@@ -13,28 +27,63 @@ const accreditationOptions: Array<{ label: string; value: AccreditationTier }> =
   { label: 'Institutional', value: 'institutional' },
 ];
 
+const nationalityOptions = [
+  ['US', 'United States'],
+  ['CH', 'Switzerland'],
+  ['SG', 'Singapore'],
+  ['AE', 'United Arab Emirates'],
+  ['GB', 'United Kingdom'],
+  ['HK', 'Hong Kong'],
+] as const;
+
+async function computeSourceOfFundsHash(reference: string) {
+  const { buildPoseidon } = await import('circomlibjs');
+  const poseidon = await buildPoseidon();
+  return bigintToHex(BigInt(poseidon.F.toString(poseidon([textToField(reference)]))));
+}
+
+function downloadAsJson(payload: Record<string, unknown>, filename: string) {
+  if (typeof document === 'undefined' || typeof URL === 'undefined') {
+    return;
+  }
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function Credential() {
   const { credential, clearCredential, saveCredential } = useCredential();
   const { refresh } = useRegistryState();
+  const { toast } = useToast();
   const { connection } = useConnection();
   const anchorWallet = useAnchorWallet();
   const { publicKey, sendTransaction } = useWallet();
+
   const [fullName, setFullName] = useState(credential?.fullName ?? '');
-  const [dateOfBirth, setDateOfBirth] = useState(credential?.dateOfBirth ?? '1990-01-01');
-  const [wallet, setWallet] = useState(credential?.wallet ?? '');
-  const [jurisdiction, setJurisdiction] = useState(credential?.jurisdiction ?? '');
   const [countryCode, setCountryCode] = useState(credential?.countryCode ?? 'US');
-  const [identitySecret, setIdentitySecret] = useState(
-    credential?.identitySecret ?? `${Date.now()}${Math.floor(Math.random() * 10_000)}`,
-  );
+  const [dateOfBirth, setDateOfBirth] = useState(credential?.dateOfBirth ?? '1990-01-01');
+  const [jurisdiction, setJurisdiction] = useState(credential?.jurisdiction ?? 'Switzerland');
+  const [wallet, setWallet] = useState(credential?.wallet ?? '');
   const [accreditation, setAccreditation] = useState<AccreditationTier>(
-    credential?.accreditation ?? 'accredited',
+    credential?.accreditation ?? 'institutional',
   );
   const [expiresAt, setExpiresAt] = useState(
-    credential?.expiresAt ?? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+    credential?.expiresAt?.slice(0, 10) ??
+      new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+  );
+  const [identitySecret, setIdentitySecret] = useState(
+    credential?.identitySecret ?? `${Date.now()}${Math.floor(Math.random() * 100_000)}`,
+  );
+  const [sourceOfFundsReference, setSourceOfFundsReference] = useState(
+    credential?.sourceOfFundsReference ?? '',
   );
   const [status, setStatus] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   function hexToBytes(value: string) {
     const normalized = value.replace(/^0x/, '').padStart(64, '0');
@@ -46,41 +95,69 @@ export default function Credential() {
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setIsSaving(true);
+    setIsSubmitting(true);
     setStatus(null);
 
+    if (!fullName || !wallet || !jurisdiction || !sourceOfFundsReference) {
+      setStatus('Full name, investor wallet, jurisdiction, and source of funds are required.');
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
-      const expiresAtIso = new Date(expiresAt).toISOString();
       const issuedAt = new Date().toISOString();
+      const expiresAtIso = new Date(expiresAt).toISOString();
+      const sourceOfFundsHash = await computeSourceOfFundsHash(sourceOfFundsReference);
+      const credentialVersion = 1;
       const leafHash = await hashCredentialLeaf({
-        fullName,
-        dateOfBirth,
-        wallet,
-        jurisdiction,
-        countryCode,
         accreditation,
+        countryCode,
+        credentialVersion,
+        dateOfBirth,
         expiresAt: expiresAtIso,
+        fullName,
         identitySecret,
+        jurisdiction,
+        sourceOfFundsHash,
+        wallet,
       });
 
-      saveCredential({
-        fullName,
-        dateOfBirth,
-        wallet,
-        jurisdiction,
-        countryCode,
+      const stagedCredential = {
         accreditation,
-        issuedAt,
+        countryCode,
+        credentialVersion,
+        dateOfBirth,
         expiresAt: expiresAtIso,
-        leafHash,
+        fullName,
         identitySecret,
-        note: 'Browser-staged credential. Production flow moves issuance to the operator console and secure storage.',
-      });
+        issuedAt,
+        jurisdiction,
+        leafHash,
+        note: 'Operator-issued institutional credential.',
+        sourceOfFundsHash,
+        sourceOfFundsReference,
+        wallet,
+      };
+
+      const prepared = await prepareStoredCredential(stagedCredential);
+      saveCredential(stagedCredential);
+      downloadAsJson(
+        {
+          ...stagedCredential,
+          issuerSignature: prepared.issuerSignature,
+        },
+        'vaultproof-credential.json',
+      );
 
       if (!anchorWallet || !publicKey || !sendTransaction) {
         setStatus(
-          'Credential leaf staged locally. Connect the registry authority wallet to submit add_credential on-chain.',
+          'Credential staged locally and downloaded. Connect the operator authority wallet to submit add_credential on-chain.',
         );
+        toast({
+          description: 'Credential file downloaded for the investor.',
+          title: 'Credential staged',
+          variant: 'success',
+        });
         return;
       }
 
@@ -93,186 +170,201 @@ export default function Credential() {
       const signature = await sendTransaction(transaction, connection);
       await connection.confirmTransaction(signature, 'confirmed');
       await refresh();
-      setStatus(`Credential leaf staged locally and submitted on-chain: ${signature}`);
+      toast({
+        description: signature,
+        title: 'Credential issued on-chain',
+        variant: 'success',
+      });
+      setStatus(`Credential issued and registry updated: ${signature}`);
     } catch (caughtError) {
-      setStatus(caughtError instanceof Error ? caughtError.message : 'Unable to stage credential.');
+      setStatus(
+        caughtError instanceof Error ? caughtError.message : 'Unable to issue credential.',
+      );
     } finally {
-      setIsSaving(false);
+      setIsSubmitting(false);
     }
   };
 
   return (
-    <PageContainer>
-      <section className="page-header">
-        <div>
-          <p className="eyebrow">Credential staging</p>
-          <h1>Prepare a wallet-bound compliance credential</h1>
-          <p>
-            The leaf hash binds jurisdiction, accreditation tier, expiry, and wallet into a single
-            browser-generated artifact. Production issuance moves to the registry operator.
-          </p>
-        </div>
-      </section>
-
-      <section className="section-grid section-grid-wide">
-        <form className="panel form-panel" onSubmit={handleSubmit}>
-          <label className="field">
-            <span>Full legal name</span>
-            <input
-              className="input"
-              onChange={(event) => setFullName(event.target.value)}
-              placeholder="Jane Doe"
-              type="text"
-              value={fullName}
-            />
-          </label>
-
-          <label className="field">
-            <span>Date of birth</span>
-            <input
-              className="input"
-              onChange={(event) => setDateOfBirth(event.target.value)}
-              type="date"
-              value={dateOfBirth}
-            />
-          </label>
-
-          <label className="field">
-            <span>Wallet public key</span>
-            <input
-              className="input"
-              onChange={(event) => setWallet(event.target.value)}
-              placeholder="Main wallet public key"
-              type="text"
-              value={wallet}
-            />
-          </label>
-
-          <label className="field">
-            <span>Jurisdiction</span>
-            <input
-              className="input"
-              onChange={(event) => setJurisdiction(event.target.value)}
-              placeholder="United States"
-              type="text"
-              value={jurisdiction}
-            />
-          </label>
-
-          <div className="form-row">
-            <label className="field">
-              <span>Country code</span>
-              <input
-                className="input"
-                maxLength={2}
-                onChange={(event) => setCountryCode(event.target.value.toUpperCase())}
-                placeholder="CH"
-                type="text"
-                value={countryCode}
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_400px]">
+      <Card>
+        <CardHeader>
+          <Badge variant="secondary">Operator Onboarding</Badge>
+          <CardTitle>Issue an investor credential</CardTitle>
+          <CardDescription>
+            Operator-issued credentials bind nationality, jurisdiction, accreditation, source of
+            funds, and a wallet address into the Merkle registry leaf.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form className="grid gap-5" onSubmit={handleSubmit}>
+            <div className="grid gap-2">
+              <Label htmlFor="fullName">Full Name</Label>
+              <Input
+                id="fullName"
+                onChange={(event) => setFullName(event.target.value)}
+                placeholder="Jane Doe"
+                value={fullName}
               />
-            </label>
-
-            <label className="field">
-              <span>Accreditation tier</span>
-              <select
-                className="input"
-                onChange={(event) => setAccreditation(event.target.value as AccreditationTier)}
-                value={accreditation}
-              >
-                {accreditationOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <label className="field">
-            <span>Expires on</span>
-            <input
-              className="input"
-              onChange={(event) => setExpiresAt(event.target.value)}
-              type="date"
-              value={expiresAt}
-            />
-          </label>
-
-          <label className="field">
-            <span>Identity secret</span>
-            <input
-              className="input"
-              onChange={(event) => setIdentitySecret(event.target.value.replace(/[^\d]/g, ''))}
-              type="text"
-              value={identitySecret}
-            />
-          </label>
-
-          <div className="action-row">
-            <button
-              className="button"
-              disabled={isSaving || !fullName || !wallet || !jurisdiction}
-              type="submit"
-            >
-              {isSaving ? 'Submitting...' : 'Issue credential'}
-            </button>
-            <button className="button button-secondary" onClick={clearCredential} type="button">
-              Clear local copy
-            </button>
-          </div>
-
-          {status ? <p className="inline-note">{status}</p> : null}
-        </form>
-
-        <article className="panel panel-stack">
-          <div>
-            <p className="eyebrow">Current staged credential</p>
-            <h2>Local-only hackathon storage</h2>
-          </div>
-          <p className="inline-note">
-            {publicKey
-              ? `Registry authority connected: ${publicKey.toBase58()}`
-              : 'Connect the registry authority wallet to submit add_credential on-chain.'}
-          </p>
-
-          {credential ? (
-            <dl className="detail-list">
-              <div>
-                <dt>Name</dt>
-                <dd>{credential.fullName}</dd>
-              </div>
-              <div>
-                <dt>Wallet</dt>
-                <dd>{credential.wallet}</dd>
-              </div>
-              <div>
-                <dt>Date of birth</dt>
-                <dd>{new Date(credential.dateOfBirth).toLocaleDateString('en-US')}</dd>
-              </div>
-              <div>
-                <dt>Jurisdiction</dt>
-                <dd>{credential.jurisdiction}</dd>
-              </div>
-              <div>
-                <dt>Accreditation</dt>
-                <dd>{credential.accreditation}</dd>
-              </div>
-              <div>
-                <dt>Expires</dt>
-                <dd>{new Date(credential.expiresAt).toLocaleDateString('en-US')}</dd>
-              </div>
-              <div>
-                <dt>Leaf hash</dt>
-                <dd className="mono-copy">{credential.leafHash}</dd>
-              </div>
-            </dl>
-          ) : (
-            <div className="empty-state">
-              <p>No credential has been staged in this browser yet.</p>
             </div>
+
+            <div className="grid gap-5 md:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="nationality">Nationality</Label>
+                <Select
+                  id="nationality"
+                  onChange={(event) => setCountryCode(event.target.value)}
+                  value={countryCode}
+                >
+                  {nationalityOptions.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="dob">Date of Birth</Label>
+                <Input
+                  id="dob"
+                  onChange={(event) => setDateOfBirth(event.target.value)}
+                  type="date"
+                  value={dateOfBirth}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-5 md:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="jurisdiction">Jurisdiction</Label>
+                <Input
+                  id="jurisdiction"
+                  onChange={(event) => setJurisdiction(event.target.value)}
+                  placeholder="Switzerland"
+                  value={jurisdiction}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="accreditation">Accreditation Tier</Label>
+                <Select
+                  id="accreditation"
+                  onChange={(event) => setAccreditation(event.target.value as AccreditationTier)}
+                  value={accreditation}
+                >
+                  {accreditationOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_180px]">
+              <div className="grid gap-2">
+                <Label htmlFor="sourceOfFundsReference">Source of Funds Reference</Label>
+                <Input
+                  id="sourceOfFundsReference"
+                  onChange={(event) => setSourceOfFundsReference(event.target.value)}
+                  placeholder="Wire transfer from UBS, verified 2026-03-01"
+                  value={sourceOfFundsReference}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="credentialVersion">Credential Version</Label>
+                <Input id="credentialVersion" readOnly value="1" />
+              </div>
+            </div>
+
+            <div className="grid gap-5 md:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="expiresAt">Credential Expiry</Label>
+                <Input
+                  id="expiresAt"
+                  onChange={(event) => setExpiresAt(event.target.value)}
+                  type="date"
+                  value={expiresAt}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="wallet">Investor Wallet Address</Label>
+                <Input
+                  id="wallet"
+                  onChange={(event) => setWallet(event.target.value)}
+                  placeholder="Investor main wallet"
+                  value={wallet}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="identitySecret">Identity Secret</Label>
+              <Input
+                id="identitySecret"
+                onChange={(event) => setIdentitySecret(event.target.value.replace(/[^\d]/g, ''))}
+                value={identitySecret}
+              />
+            </div>
+
+            {status ? (
+              <Alert
+                description={status}
+                title={status.toLowerCase().includes('unable') ? 'Issuance failed' : 'Issuance status'}
+                variant={status.toLowerCase().includes('unable') ? 'destructive' : 'default'}
+              />
+            ) : null}
+
+            <div className="flex flex-wrap gap-3">
+              <Button disabled={isSubmitting} type="submit">
+                {isSubmitting ? 'Issuing Credential...' : 'Issue Credential'}
+              </Button>
+              <Button onClick={clearCredential} type="button" variant="secondary">
+                Clear Local Copy
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <Badge variant="outline">Downloaded Credential</Badge>
+          <CardTitle>Current staged artifact</CardTitle>
+          <CardDescription>
+            The stored credential feeds the investor proof flow and includes source-of-funds hash
+            plus credential version.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          {credential ? (
+            <>
+              <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4">
+                <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">Investor</p>
+                <p className="mt-2 text-sm text-text-primary">{credential.fullName}</p>
+                <p className="mt-1 font-mono text-xs text-text-secondary">{credential.wallet}</p>
+              </div>
+              <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4">
+                <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">Source of Funds Hash</p>
+                <p className="mt-2 break-all font-mono text-xs text-text-secondary">
+                  {credential.sourceOfFundsHash}
+                </p>
+              </div>
+              <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4">
+                <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">Leaf Hash</p>
+                <p className="mt-2 break-all font-mono text-xs text-text-secondary">
+                  {credential.leafHash}
+                </p>
+              </div>
+            </>
+          ) : (
+            <Alert
+              description="Issue a credential to populate the investor proof flow."
+              title="No staged credential"
+              variant="warning"
+            />
           )}
-        </article>
-      </section>
-    </PageContainer>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

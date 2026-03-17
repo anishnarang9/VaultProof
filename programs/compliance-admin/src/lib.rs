@@ -1,3 +1,9 @@
+//! Squads v4 governance stays client-side in this crate for now because the
+//! published Rust CPI crate graph is not compatible with the workspace's
+//! Anchor 0.32.1 toolchain. When `vault_state.authority` is set to a Squads
+//! vault PDA, transactions executed by Squads still satisfy the signer checks
+//! below because the PDA signs the downstream CPI.
+
 use anchor_lang::prelude::*;
 
 declare_id!("BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K");
@@ -126,6 +132,8 @@ pub struct AuthorizeDecryption<'info> {
     #[account(mut)]
     pub transfer_record: Account<'info, vusd_vault::TransferRecord>,
 
+    // The signer may be a human authority today or a Squads vault PDA once the
+    // client-side governance flow proposes, approves, and executes this call.
     #[account(mut)]
     pub authority: Signer<'info>,
 

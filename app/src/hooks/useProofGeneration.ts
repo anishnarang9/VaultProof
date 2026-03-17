@@ -131,6 +131,7 @@ export function useProofGeneration(client: VaultProofReadClient = defaultReadCli
         const circuitInput = buildCircuitInput({
           accreditationStatus: preparedCredential.accreditationStatus,
           balance: request.balance ?? request.amount,
+          credentialVersion: preparedCredential.credentialVersion,
           credentialExpiry: preparedCredential.credentialExpiry,
           currentTimestamp,
           dateOfBirth: preparedCredential.dateOfBirth,
@@ -151,6 +152,7 @@ export function useProofGeneration(client: VaultProofReadClient = defaultReadCli
           retailThreshold: BigInt(request.thresholds.retail.toString()),
           accreditedThreshold: BigInt(request.thresholds.accredited.toString()),
           expiredThreshold: BigInt(request.thresholds.expired.toString()),
+          sourceOfFundsHash: preparedCredential.sourceOfFundsHash,
           transferAmount: request.amount,
           walletPubkey: preparedCredential.walletPubkey,
         });

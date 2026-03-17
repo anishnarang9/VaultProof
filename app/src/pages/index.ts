@@ -1,7 +1,12 @@
 export { default as Compliance } from './Compliance';
+export { default as ComplianceDetail } from './ComplianceDetail';
 export { default as Credential } from './Credential';
 export { default as Dashboard } from './Dashboard';
 export { default as Deposit } from './Deposit';
-export { default as Home } from './Home';
+export { default as Landing } from './Landing';
+export { default as OperatorGovernance } from './OperatorGovernance';
+export { default as OperatorRisk } from './OperatorRisk';
+export { default as OperatorYield } from './OperatorYield';
+export { default as Portfolio } from './Portfolio';
 export { default as Transfer } from './Transfer';
 export { default as Withdraw } from './Withdraw';

@@ -3,7 +3,19 @@ import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapte
 import { PublicKey } from '@solana/web3.js';
 import { useMemo, useState } from 'react';
 import ProofGenerationModal from '../components/proof/ProofGenerationModal';
-import PageContainer from '../components/layout/PageContainer';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Input,
+  Label,
+} from '../components/ui/primitives';
+import { useToast } from '../components/ui/primitives';
 import { useCredential } from '../hooks/useCredential';
 import { useProofGeneration } from '../hooks/useProofGeneration';
 import { useTransferRecords } from '../hooks/useTransferRecords';
@@ -11,6 +23,7 @@ import { useVaultState } from '../hooks/useVaultState';
 import { buildTransferTx, getPrograms, proofToOnchainFormat } from '../lib/program';
 
 export default function Transfer() {
+  const { toast } = useToast();
   const { credential } = useCredential();
   const { data: vault } = useVaultState();
   const { refresh } = useTransferRecords();
@@ -31,7 +44,7 @@ export default function Transfer() {
     setStatus(null);
 
     if (!credential) {
-      setStatus('Stage a credential before attempting a transfer.');
+      setStatus('Load or stage a credential before attempting a transfer.');
       return;
     }
 
@@ -72,6 +85,11 @@ export default function Transfer() {
       const signature = await sendTransaction(transaction, connection);
       await connection.confirmTransaction(signature, 'confirmed');
       await refresh();
+      toast({
+        description: signature,
+        title: 'Transfer submitted',
+        variant: 'success',
+      });
       setStatus(`Transfer submitted: ${signature}`);
     } catch (caughtError) {
       setStatus(caughtError instanceof Error ? caughtError.message : 'Unable to submit transfer.');
@@ -79,67 +97,77 @@ export default function Transfer() {
   };
 
   return (
-    <PageContainer>
-      <section className="page-header">
-        <div>
-          <p className="eyebrow">Stealth transfer</p>
-          <h1>Move vault shares between verified participants</h1>
-          <p>
-            Transfers keep identity confidential while preserving a public compliance record and
-            a regulator-readable encrypted payload.
-          </p>
-        </div>
-      </section>
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <Card>
+        <CardHeader>
+          <Badge variant="secondary">Transfer</Badge>
+          <CardTitle className="mt-3">Transfer shares with proof</CardTitle>
+          <CardDescription>
+            Preserve confidential identity while keeping an auditable TransferRecord and encrypted
+            Travel Rule payload for compliance review.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form className="grid gap-5" onSubmit={handleSubmit}>
+            <div className="grid gap-2">
+              <Label htmlFor="recipient">Recipient Address</Label>
+              <Input
+                id="recipient"
+                onChange={(event) => setRecipient(event.target.value)}
+                placeholder="Recipient public key"
+                value={recipient}
+              />
+            </div>
 
-      <section className="section-grid section-grid-wide">
-        <form className="panel form-panel" onSubmit={handleSubmit}>
-          <label className="field">
-            <span>Recipient stealth address</span>
-            <input
-              className="input"
-              onChange={(event) => setRecipient(event.target.value)}
-              placeholder="Stealth recipient public key"
-              type="text"
-              value={recipient}
-            />
-          </label>
+            <div className="grid gap-2">
+              <Label htmlFor="amount">Amount (vault shares)</Label>
+              <Input
+                id="amount"
+                inputMode="decimal"
+                onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
+                value={amount}
+              />
+            </div>
 
-          <label className="field">
-            <span>Amount (vault shares)</span>
-            <input
-              className="input"
-              inputMode="decimal"
-              onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
-              placeholder="0"
-              type="text"
-              value={amount}
-            />
-          </label>
+            {status ? (
+              <Alert
+                description={status}
+                title={status.toLowerCase().includes('unable') ? 'Transfer failed' : 'Transfer status'}
+                variant={status.toLowerCase().includes('unable') ? 'destructive' : 'default'}
+              />
+            ) : null}
 
-          <button
-            className="button"
-            disabled={!credential || !recipient || !amount || !publicKey}
-            type="submit"
-          >
-            Generate transfer proof
-          </button>
+            <Button disabled={!credential || !recipient || !amount || !publicKey} type="submit">
+              Generate Transfer Proof
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
 
-          {proofGeneration.error ? <p className="inline-error">{proofGeneration.error}</p> : null}
-          {status ? <p className="inline-note">{status}</p> : null}
-        </form>
-
-        <article className="panel panel-stack">
-          <div>
-            <p className="eyebrow">Visibility model</p>
-            <h2>What the chain exposes</h2>
-          </div>
-          <ul className="list">
-            <li>TransferRecord existence and proof hash remain public.</li>
-            <li>Vault share balances on stealth accounts are visible.</li>
-            <li>Identity, accreditation, and metadata stay encrypted or off-chain.</li>
-          </ul>
-        </article>
-      </section>
+      <Card>
+        <CardHeader>
+          <Badge variant="outline">Visibility Model</Badge>
+          <CardTitle className="mt-3">What the chain sees</CardTitle>
+          <CardDescription>
+            Proof hashes and transfer records are public. Identity, accreditation, and source-of-funds
+            references remain inside the witness or encrypted payload.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          {[
+            'TransferRecord existence and proof hash are public.',
+            'Balances on the vault-share token accounts remain visible.',
+            'Travel Rule metadata stays encrypted until authorized decryption.',
+          ].map((item) => (
+            <div
+              key={item}
+              className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4 text-sm leading-6 text-text-secondary"
+            >
+              {item}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
       <ProofGenerationModal
         error={proofGeneration.error}
@@ -153,6 +181,6 @@ export default function Transfer() {
         steps={proofGeneration.timeline}
         title="Transfer proof generation"
       />
-    </PageContainer>
+    </div>
   );
 }

@@ -300,8 +300,17 @@ async function fetchAllAccounts<T>(
 }
 
 function normalizeVaultState(raw: Record<string, unknown>): VaultState {
+  const normalizedCustodyProvider =
+    typeof raw.custodyProvider === 'string'
+      ? raw.custodyProvider
+      : raw.custodyProvider && typeof raw.custodyProvider === 'object'
+        ? Object.keys(raw.custodyProvider as Record<string, unknown>)[0]
+        : 'SelfCustody';
+
   return createEmptyVaultState({
     authority: toPublicKey(raw.authority),
+    custodyAuthority: toPublicKey(raw.custodyAuthority),
+    custodyProvider: normalizedCustodyProvider as VaultState['custodyProvider'],
     usdcMint: toPublicKey(raw.usdcMint),
     shareMint: toPublicKey(raw.shareMint),
     usdcReserve: toPublicKey(raw.usdcReserve),
@@ -318,6 +327,14 @@ function normalizeVaultState(raw: Record<string, unknown>): VaultState {
       toBN((raw.amlThresholds as unknown[] | undefined)?.[2]),
     ],
     expiredThreshold: toBN(raw.expiredThreshold),
+    dailyOutflowTotal: toBN(raw.dailyOutflowTotal),
+    outflowWindowStart: toBN(raw.outflowWindowStart),
+    circuitBreakerThreshold: toBN(raw.circuitBreakerThreshold),
+    paused: Boolean(raw.paused),
+    maxSingleTransaction: toBN(raw.maxSingleTransaction),
+    maxSingleDeposit: toBN(raw.maxSingleDeposit),
+    maxDailyTransactions: Number(raw.maxDailyTransactions ?? 40),
+    dailyTransactionCount: Number(raw.dailyTransactionCount ?? 0),
     emergencyTimelock: toBN(raw.emergencyTimelock),
     regulatorPubkeyX: toBytes(raw.regulatorPubkeyX),
     regulatorPubkeyY: toBytes(raw.regulatorPubkeyY),

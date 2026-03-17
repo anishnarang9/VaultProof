@@ -30,3 +30,41 @@ if (
     },
   });
 }
+
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  class ResizeObserver {
+    disconnect() {}
+
+    observe() {}
+
+    unobserve() {}
+  }
+
+  Object.defineProperty(globalThis, 'ResizeObserver', {
+    configurable: true,
+    value: ResizeObserver,
+  });
+}
+
+if (typeof globalThis.scrollTo !== 'function') {
+  Object.defineProperty(globalThis, 'scrollTo', {
+    configurable: true,
+    value: () => undefined,
+  });
+}
+
+if (typeof globalThis.matchMedia !== 'function') {
+  Object.defineProperty(globalThis, 'matchMedia', {
+    configurable: true,
+    value: () => ({
+      addEventListener: () => undefined,
+      addListener: () => undefined,
+      dispatchEvent: () => false,
+      matches: false,
+      media: '',
+      onchange: null,
+      removeEventListener: () => undefined,
+      removeListener: () => undefined,
+    }),
+  });
+}

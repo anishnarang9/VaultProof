@@ -1,4 +1,5 @@
-import { AnimatePresence, motion } from 'framer-motion';
+import { useEffect, useState } from 'react';
+import { Alert, Badge, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/primitives';
 
 interface ProofStep {
   key: string;
@@ -25,57 +26,83 @@ export default function ProofGenerationModal({
   steps,
   title,
 }: ProofGenerationModalProps) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!isOpen || !isGenerating) {
+      setElapsedSeconds(0);
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      setElapsedSeconds((current) => current + 1);
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [isGenerating, isOpen]);
+
   return (
-    <AnimatePresence>
-      {isOpen ? (
-        <motion.div
-          animate={{ opacity: 1 }}
-          className="proof-backdrop"
-          exit={{ opacity: 0 }}
-          initial={{ opacity: 0 }}
-          onClick={(event) => {
-            if (event.target === event.currentTarget && !isGenerating) {
-              onClose();
-            }
-          }}
-        >
-          <motion.div
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="proof-modal"
-            exit={{ opacity: 0, scale: 0.98, y: 18 }}
-            initial={{ opacity: 0, scale: 0.98, y: 18 }}
-            transition={{ duration: 0.24 }}
-          >
-            <div className="proof-modal-header">
-              <div>
-                <p className="eyebrow">Browser prover</p>
-                <h2>{title}</h2>
-              </div>
-              <button className="button button-secondary" onClick={onClose} type="button">
-                Close
-              </button>
-            </div>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open && !isGenerating) {
+          onClose();
+        }
+      }}
+    >
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <Badge variant="secondary">Browser Prover</Badge>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
+            {isGenerating
+              ? `Generating proof... ${elapsedSeconds}s`
+              : proofTime
+                ? `Proof completed in ${proofTime}.`
+                : 'Client-side proving keeps sensitive credential inputs local to the browser.'}
+          </DialogDescription>
+        </DialogHeader>
 
-            <div className="proof-status-band">
-              <span className={`status-pill${error ? ' status-pill-error' : ''}`}>
+        <div className="grid gap-3 sm:grid-cols-[180px_1fr]">
+          <div className="rounded-[var(--radius)] border border-border bg-surface px-4 py-5">
+            <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">Status</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge variant={error ? 'destructive' : isGenerating ? 'accent' : 'success'}>
                 {error ? 'Interrupted' : isGenerating ? 'Running' : 'Ready'}
-              </span>
-              <span>{proofTime ? `Proof time: ${proofTime}` : 'Client-side proving only'}</span>
+              </Badge>
+              <Badge variant="outline">{proofTime ? proofTime : 'Local only'}</Badge>
             </div>
+          </div>
 
-            <div className="proof-step-list">
+          <div className="rounded-[var(--radius)] border border-border bg-surface px-4 py-5">
+            <div className="grid gap-3">
               {steps.map((step) => (
-                <div key={step.key} className="proof-step-row">
-                  <span className={`status-dot status-dot-${step.status}`} />
-                  <span>{step.label}</span>
+                <div key={step.key} className="flex items-center gap-3">
+                  <span
+                    className={[
+                      'h-2.5 w-2.5 rounded-full',
+                      step.status === 'complete'
+                        ? 'bg-success'
+                        : step.status === 'active'
+                          ? 'bg-accent'
+                          : 'bg-text-tertiary',
+                    ].join(' ')}
+                  />
+                  <span className="text-sm text-text-secondary">{step.label}</span>
                 </div>
               ))}
             </div>
+          </div>
+        </div>
 
-            {error ? <p className="inline-error">{error}</p> : null}
-          </motion.div>
-        </motion.div>
-      ) : null}
-    </AnimatePresence>
+        {error ? (
+          <Alert
+            description={error}
+            title="Proof generation failed"
+            variant="destructive"
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }

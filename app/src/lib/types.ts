@@ -4,6 +4,7 @@ import { PublicKey } from '@solana/web3.js';
 export const EMPTY_PUBLIC_KEY = new PublicKey('11111111111111111111111111111111');
 
 export type AccreditationTier = 'retail' | 'accredited' | 'institutional' | 'expired';
+export type CustodyProvider = 'SelfCustody' | 'Fireblocks' | 'BitGo' | 'Anchorage';
 export type ProofLifecycleStep =
   | 'idle'
   | 'loading-circuit'
@@ -36,6 +37,8 @@ export interface RegulatorKey {
 
 export interface VaultState {
   authority: PublicKey;
+  custodyAuthority: PublicKey;
+  custodyProvider: CustodyProvider;
   usdcMint: PublicKey;
   shareMint: PublicKey;
   usdcReserve: PublicKey;
@@ -48,6 +51,14 @@ export interface VaultState {
   totalYieldEarned: BN;
   amlThresholds: [BN, BN, BN];
   expiredThreshold: BN;
+  dailyOutflowTotal: BN;
+  outflowWindowStart: BN;
+  circuitBreakerThreshold: BN;
+  paused: boolean;
+  maxSingleTransaction: BN;
+  maxSingleDeposit: BN;
+  maxDailyTransactions: number;
+  dailyTransactionCount: number;
   emergencyTimelock: BN;
   regulatorPubkeyX: number[];
   regulatorPubkeyY: number[];
@@ -57,6 +68,8 @@ export interface VaultState {
 
 export interface VaultStateView extends VaultState {
   sharePrice: number;
+  circuitBreakerUsage: number;
+  liquidBufferRatio: number;
   regulatorKey: RegulatorKey;
   thresholds: VaultThresholds;
 }
@@ -129,6 +142,9 @@ export interface StoredCredential {
   expiresAt: string;
   leafHash: string;
   identitySecret: string;
+  sourceOfFundsHash: string;
+  credentialVersion: number;
+  sourceOfFundsReference?: string;
   note?: string;
 }
 
@@ -147,6 +163,8 @@ export interface CircuitInputParams {
   jurisdiction: bigint;
   accreditationStatus: bigint;
   credentialExpiry: bigint;
+  sourceOfFundsHash: bigint;
+  credentialVersion: bigint;
   identitySecret: bigint;
   issuerSignature: {
     R8: [bigint, bigint];
@@ -193,6 +211,11 @@ export interface ProofResult {
   merkleContextSource: 'registry' | 'local-single-leaf';
 }
 
+export interface MonitoringAlert {
+  severity: 'info' | 'warning' | 'critical';
+  message: string;
+}
+
 function emptyBytes(length = 32) {
   return Array.from({ length }, () => 0);
 }
@@ -204,6 +227,8 @@ function bn(value: number | string | bigint) {
 export function createEmptyVaultState(overrides: Partial<VaultState> = {}): VaultState {
   return {
     authority: overrides.authority ?? EMPTY_PUBLIC_KEY,
+    custodyAuthority: overrides.custodyAuthority ?? EMPTY_PUBLIC_KEY,
+    custodyProvider: overrides.custodyProvider ?? 'SelfCustody',
     usdcMint: overrides.usdcMint ?? EMPTY_PUBLIC_KEY,
     shareMint: overrides.shareMint ?? EMPTY_PUBLIC_KEY,
     usdcReserve: overrides.usdcReserve ?? EMPTY_PUBLIC_KEY,
@@ -216,6 +241,14 @@ export function createEmptyVaultState(overrides: Partial<VaultState> = {}): Vaul
     totalYieldEarned: overrides.totalYieldEarned ?? bn(0),
     amlThresholds: overrides.amlThresholds ?? [bn(0), bn(0), bn(0)],
     expiredThreshold: overrides.expiredThreshold ?? bn(0),
+    dailyOutflowTotal: overrides.dailyOutflowTotal ?? bn(0),
+    outflowWindowStart: overrides.outflowWindowStart ?? bn(0),
+    circuitBreakerThreshold: overrides.circuitBreakerThreshold ?? bn(500_000),
+    paused: overrides.paused ?? false,
+    maxSingleTransaction: overrides.maxSingleTransaction ?? bn(250_000),
+    maxSingleDeposit: overrides.maxSingleDeposit ?? bn(1_000_000),
+    maxDailyTransactions: overrides.maxDailyTransactions ?? 40,
+    dailyTransactionCount: overrides.dailyTransactionCount ?? 0,
     emergencyTimelock: overrides.emergencyTimelock ?? bn(72 * 60 * 60),
     regulatorPubkeyX: overrides.regulatorPubkeyX ?? emptyBytes(32),
     regulatorPubkeyY: overrides.regulatorPubkeyY ?? emptyBytes(32),

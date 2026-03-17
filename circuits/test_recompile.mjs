@@ -25,6 +25,8 @@ const BASE8_RAW = [
     "5299619240641551281634865583518297030282874472190772894086521144482721001553",
     "16950150798460657717958625567821834550301663161624707787222815936182638968203",
 ];
+const DEFAULT_SOURCE_OF_FUNDS_SEED = 12345n;
+const DEFAULT_CREDENTIAL_VERSION = 1n;
 
 function usd(dollars) {
     return BigInt(dollars) * 1000000n;
@@ -71,14 +73,35 @@ function createRegulatorKeypair(ctx) {
     };
 }
 
+function defaultSourceOfFundsHash(ctx) {
+    return ctx.F.toObject(ctx.poseidon([DEFAULT_SOURCE_OF_FUNDS_SEED]));
+}
+
+function normalizeCredentialFields(ctx, fields) {
+    return {
+        ...fields,
+        sourceOfFundsHash: fields.sourceOfFundsHash ?? defaultSourceOfFundsHash(ctx),
+        credentialVersion: fields.credentialVersion ?? DEFAULT_CREDENTIAL_VERSION,
+    };
+}
+
 function createCredential(ctx, issuer, fields, identitySecret, walletPubkey) {
-    const credHash1 = ctx.poseidon([fields.name, fields.nationality]);
-    const credHash2 = ctx.poseidon([fields.dateOfBirth, fields.jurisdiction]);
-    const credHash3 = ctx.poseidon([fields.accreditationStatus, fields.credentialExpiry]);
+    const normalizedFields = normalizeCredentialFields(ctx, fields);
+    const credHash1 = ctx.poseidon([normalizedFields.name, normalizedFields.nationality]);
+    const credHash2 = ctx.poseidon([normalizedFields.dateOfBirth, normalizedFields.jurisdiction]);
+    const credHash3 = ctx.poseidon([
+        normalizedFields.accreditationStatus,
+        normalizedFields.credentialExpiry,
+    ]);
+    const credHash4 = ctx.poseidon([
+        normalizedFields.sourceOfFundsHash,
+        normalizedFields.credentialVersion,
+    ]);
     const credHashFinal = ctx.poseidon([
         ctx.F.toObject(credHash1),
         ctx.F.toObject(credHash2),
         ctx.F.toObject(credHash3),
+        ctx.F.toObject(credHash4),
     ]);
     const credHashFinalBigInt = ctx.F.toObject(credHashFinal);
 
@@ -86,7 +109,7 @@ function createCredential(ctx, issuer, fields, identitySecret, walletPubkey) {
     const leaf = ctx.poseidon([credHashFinalBigInt, identitySecret, walletPubkey]);
 
     return {
-        ...fields,
+        ...normalizedFields,
         identitySecret,
         walletPubkey,
         credHashFinalBigInt,
@@ -163,6 +186,8 @@ function buildCircuitInput({
         jurisdiction: credential.jurisdiction.toString(),
         accreditationStatus: credential.accreditationStatus.toString(),
         credentialExpiry: credential.credentialExpiry.toString(),
+        sourceOfFundsHash: credential.sourceOfFundsHash.toString(),
+        credentialVersion: credential.credentialVersion.toString(),
         identitySecret: credential.identitySecret.toString(),
         issuerSigR8x: credential.sigR8x.toString(),
         issuerSigR8y: credential.sigR8y.toString(),
@@ -241,6 +266,8 @@ async function main() {
         jurisdiction: 756n,
         accreditationStatus: 1n,
         credentialExpiry: nowTs + (86400n * 365n),
+        sourceOfFundsHash: defaultSourceOfFundsHash(ctx),
+        credentialVersion: DEFAULT_CREDENTIAL_VERSION,
     };
     const identitySecret = 9876543210987654321n;
     const transferAmount = usd(50000);

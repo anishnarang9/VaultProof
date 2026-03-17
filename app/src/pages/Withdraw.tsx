@@ -2,7 +2,19 @@ import { BN } from '@coral-xyz/anchor';
 import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { useEffect, useMemo, useState } from 'react';
 import ProofGenerationModal from '../components/proof/ProofGenerationModal';
-import PageContainer from '../components/layout/PageContainer';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Input,
+  Label,
+} from '../components/ui/primitives';
+import { useToast } from '../components/ui/primitives';
 import { useCredential } from '../hooks/useCredential';
 import { useProofGeneration } from '../hooks/useProofGeneration';
 import { useTransferRecords } from '../hooks/useTransferRecords';
@@ -28,6 +40,7 @@ function formatCountdown(totalSeconds: number) {
 }
 
 export default function Withdraw() {
+  const { toast } = useToast();
   const { credential } = useCredential();
   const { data: vault } = useVaultState();
   const { refresh } = useTransferRecords();
@@ -43,6 +56,10 @@ export default function Withdraw() {
   const [status, setStatus] = useState<string | null>(null);
 
   const numericAmount = useMemo(() => BigInt(Math.round(Number(amount || '0'))), [amount]);
+  const expectedUsdcOutput = useMemo(
+    () => (Number.isFinite(vault.sharePrice) ? Number(amount || 0) * vault.sharePrice : 0),
+    [amount, vault.sharePrice],
+  );
 
   useEffect(() => {
     if (!emergencyRequestedAt) {
@@ -70,7 +87,7 @@ export default function Withdraw() {
     setStatus(null);
 
     if (!credential) {
-      setStatus('Stage a credential before attempting a withdrawal.');
+      setStatus('Load or stage a credential before attempting a withdrawal.');
       return;
     }
 
@@ -114,9 +131,16 @@ export default function Withdraw() {
       const signature = await sendTransaction(transaction, connection);
       await connection.confirmTransaction(signature, 'confirmed');
       await refresh();
+      toast({
+        description: signature,
+        title: 'Withdrawal submitted',
+        variant: 'success',
+      });
       setStatus(`Withdrawal submitted: ${signature}`);
     } catch (caughtError) {
-      setStatus(caughtError instanceof Error ? caughtError.message : 'Unable to submit withdrawal.');
+      setStatus(
+        caughtError instanceof Error ? caughtError.message : 'Unable to submit withdrawal.',
+      );
     }
   };
 
@@ -137,6 +161,11 @@ export default function Withdraw() {
       await connection.confirmTransaction(signature, 'confirmed');
       setEmergencyRequestedAt(Date.now());
       setTimeLeft(EMERGENCY_DELAY_SECONDS);
+      toast({
+        description: signature,
+        title: 'Emergency withdrawal requested',
+        variant: 'warning',
+      });
       setStatus(`Emergency withdrawal requested: ${signature}`);
     } catch (caughtError) {
       setStatus(
@@ -163,6 +192,11 @@ export default function Withdraw() {
       const signature = await sendTransaction(transaction, connection);
       await connection.confirmTransaction(signature, 'confirmed');
       await refresh();
+      toast({
+        description: signature,
+        title: 'Emergency withdrawal executed',
+        variant: 'success',
+      });
       setStatus(`Emergency withdrawal executed: ${signature}`);
     } catch (caughtError) {
       setStatus(
@@ -174,88 +208,89 @@ export default function Withdraw() {
   };
 
   return (
-    <PageContainer>
-      <section className="page-header">
-        <div>
-          <p className="eyebrow">Withdraw flow</p>
-          <h1>Redeem vault shares back to a main wallet</h1>
-          <p>
-            Standard withdrawals follow the same proof path as deposits and transfers. Emergency
-            withdrawals preserve a 72-hour review window everywhere in the product.
-          </p>
-        </div>
-      </section>
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <Card>
+        <CardHeader>
+          <Badge variant="secondary">Withdraw</Badge>
+          <CardTitle className="mt-3">Withdraw with proof or emergency hatch</CardTitle>
+          <CardDescription>
+            Standard withdrawals follow the proof path. Emergency withdrawals keep a 72-hour review
+            window before execution.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form className="grid gap-5" onSubmit={handleSubmit}>
+            <div className="grid gap-2">
+              <Label htmlFor="wallet">Destination Wallet</Label>
+              <Input
+                id="wallet"
+                onChange={(event) => setTargetWallet(event.target.value)}
+                value={targetWallet}
+              />
+            </div>
 
-      <section className="section-grid section-grid-wide">
-        <form className="panel form-panel" onSubmit={handleSubmit}>
-          <label className="field">
-            <span>Main wallet destination</span>
-            <input
-              className="input"
-              onChange={(event) => setTargetWallet(event.target.value)}
-              placeholder="Destination wallet public key"
-              type="text"
-              value={targetWallet}
-            />
-          </label>
+            <div className="grid gap-2">
+              <Label htmlFor="amount">Shares to Burn</Label>
+              <Input
+                id="amount"
+                inputMode="decimal"
+                onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
+                value={amount}
+              />
+            </div>
 
-          <label className="field">
-            <span>Amount (vault shares)</span>
-            <input
-              className="input"
-              inputMode="decimal"
-              onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
-              placeholder="0"
-              type="text"
-              value={amount}
-            />
-          </label>
+            <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4">
+              <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">Expected USDC Output</p>
+              <p className="mt-2 text-sm text-text-primary">${expectedUsdcOutput.toFixed(2)}</p>
+            </div>
 
-          <button
-            className="button"
-            disabled={!credential || !targetWallet || !amount || !publicKey}
-            type="submit"
-          >
-            Generate withdrawal proof
-          </button>
+            {status ? (
+              <Alert
+                description={status}
+                title={status.toLowerCase().includes('unable') ? 'Withdrawal failed' : 'Withdrawal status'}
+                variant={status.toLowerCase().includes('unable') ? 'destructive' : 'default'}
+              />
+            ) : null}
 
-          {proofGeneration.error ? <p className="inline-error">{proofGeneration.error}</p> : null}
-          {status ? <p className="inline-note">{status}</p> : null}
-        </form>
+            <Button disabled={!credential || !targetWallet || !amount || !publicKey} type="submit">
+              Generate Withdrawal Proof
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
 
-        <article className="panel panel-stack">
-          <div>
-            <p className="eyebrow">Emergency path</p>
-            <h2>72-hour operator review</h2>
+      <Card>
+        <CardHeader>
+          <Badge variant="outline">Emergency Path</Badge>
+          <CardTitle className="mt-3">72-hour timelock</CardTitle>
+          <CardDescription>
+            Request the emergency path when proof generation is unavailable, then execute after the
+            mandated review window.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4">
+            <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">Timelock</p>
+            <p className="mt-2 text-sm text-text-primary">
+              {Math.floor(Number(vault.emergencyTimelock.toString()) / 3600)} hours
+            </p>
           </div>
-          <p>
-            Emergency withdrawals bypass browser proving but keep a 72-hour compliance review
-            window. This page reflects the addendum timing change everywhere.
-          </p>
-          <button
-            className="button button-secondary"
-            onClick={handleEmergencyRequest}
-            type="button"
-          >
-            Request emergency withdrawal
-          </button>
+          <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4">
+            <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">Countdown</p>
+            <p className="mt-2 font-mono text-sm text-text-primary">
+              {emergencyRequestedAt ? formatCountdown(timeLeft) : 'Not requested'}
+            </p>
+          </div>
+          <Button onClick={handleEmergencyRequest} type="button" variant="secondary">
+            Request Emergency Withdrawal
+          </Button>
           {emergencyRequestedAt && timeLeft === 0 ? (
-            <button className="button" onClick={handleEmergencyExecute} type="button">
-              Execute emergency withdrawal
-            </button>
+            <Button onClick={handleEmergencyExecute} type="button">
+              Execute Emergency Withdrawal
+            </Button>
           ) : null}
-          <div className="detail-list">
-            <div>
-              <dt>Timelock</dt>
-              <dd>{Math.floor(Number(vault.emergencyTimelock.toString()) / 3600)} hours</dd>
-            </div>
-            <div>
-              <dt>Countdown</dt>
-              <dd>{emergencyRequestedAt ? formatCountdown(timeLeft) : 'Not requested'}</dd>
-            </div>
-          </div>
-        </article>
-      </section>
+        </CardContent>
+      </Card>
 
       <ProofGenerationModal
         error={proofGeneration.error}
@@ -269,6 +304,6 @@ export default function Withdraw() {
         steps={proofGeneration.timeline}
         title="Withdrawal proof generation"
       />
-    </PageContainer>
+    </div>
   );
 }

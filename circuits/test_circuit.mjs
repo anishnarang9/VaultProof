@@ -23,6 +23,7 @@ import {
     verifyDecryptedField,
     buildCircuitInput,
     buildMetadataFields,
+    defaultSourceOfFundsHash,
     tryProve,
     usd,
 } from "./test_utils.mjs";
@@ -51,6 +52,8 @@ async function main() {
         jurisdiction: 756n,
         accreditationStatus: 1n,
         credentialExpiry: 1805097600n,
+        sourceOfFundsHash: defaultSourceOfFundsHash(ctx),
+        credentialVersion: 1n,
     };
     const identitySecret = 9876543210987654321n;
     const cred = createCredential(ctx, issuer, credFields, identitySecret);

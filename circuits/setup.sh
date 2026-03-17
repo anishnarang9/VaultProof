@@ -18,7 +18,7 @@ BUILD_DIR="build"
 PTAU_NEW="pot16_0000.ptau"
 PTAU_CONTRIBUTED="pot16_0001.ptau"
 PTAU_FILE="pot16_final.ptau"
-PTAU_POWER=16  # 2^16 = 65536 constraints max (circuit is ~26k)
+PTAU_POWER=16  # 2^16 = 65536 constraints max (current circuit is ~49k)
 
 SNARKJS="npx snarkjs"
 
@@ -102,4 +102,4 @@ echo "  ${BUILD_DIR}/${CIRCUIT_NAME}.sym            - Debug symbols"
 echo "  ${BUILD_DIR}/${CIRCUIT_NAME}_final.zkey     - Proving key"
 echo "  ${BUILD_DIR}/verification_key.json          - Verification key"
 echo ""
-echo "Next: Run 'node export_vk_solana.mjs verification_key.json > ../programs/vusd-vault/src/keys/verifying_key.rs'"
+echo "Next: Run 'node export_vk_solana.mjs build/verification_key.json > ../programs/vusd-vault/src/keys/verifying_key.rs'"

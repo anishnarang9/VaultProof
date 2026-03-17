@@ -1,3 +1,8 @@
+//! Production migration path: replace the PDA-backed credential leaves in this
+//! program with Light Protocol compressed accounts once the workspace can adopt
+//! a Light SDK release that is compatible with Anchor 0.32.1 and the local test
+//! environment includes the required Light system programs.
+
 use anchor_lang::prelude::*;
 use solana_poseidon::{hashv as poseidon_hashv, Endianness, Parameters};
 
@@ -157,6 +162,10 @@ impl KycRegistry {
         8 + 32 + 32 + 8 + 8 + 32 + 32 + 1
     }
 }
+
+/// CPI-facing config alias used by downstream crates while preserving the
+/// existing account name in the generated IDL for current TypeScript clients.
+pub type KycRegistryConfig = KycRegistry;
 
 #[account]
 pub struct StateTree {

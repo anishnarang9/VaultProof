@@ -21,6 +21,18 @@ describe("strict verifier", function () {
     run("cargo", ["test", "-p", "vusd-vault", "strict_", "--", "--nocapture"]);
   });
 
+  it("runs the vusd-vault risk control unit tests", () => {
+    run("cargo", ["test", "-p", "vusd-vault", "risk_", "--", "--nocapture"]);
+  });
+
+  it("runs the vusd-vault admin update unit tests", () => {
+    run("cargo", ["test", "-p", "vusd-vault", "admin_", "--", "--nocapture"]);
+  });
+
+  it("runs the vusd-vault custody unit tests", () => {
+    run("cargo", ["test", "-p", "vusd-vault", "custody_", "--", "--nocapture"]);
+  });
+
   it("runs the compliance-admin decryption authorization unit tests", () => {
     run("cargo", ["test", "-p", "compliance-admin", "decryption_", "--", "--nocapture"]);
   });
