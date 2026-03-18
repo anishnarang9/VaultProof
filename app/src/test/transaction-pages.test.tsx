@@ -225,9 +225,9 @@ describe('frontend transaction pages', () => {
     const record = new PublicKey(new Uint8Array(32).fill(13)).toBase58();
 
     render(
-      <MemoryRouter initialEntries={[`/developer/compliance/${record}`]}>
+      <MemoryRouter initialEntries={[`/institution/compliance/${record}`]}>
         <Routes>
-          <Route path="/developer/compliance/:id" element={<ComplianceDetail />} />
+          <Route path="/institution/compliance/:id" element={<ComplianceDetail />} />
         </Routes>
       </MemoryRouter>,
     );

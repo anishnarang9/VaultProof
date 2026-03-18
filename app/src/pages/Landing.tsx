@@ -1,68 +1,45 @@
 import { Link } from 'react-router-dom';
-import {
-  ArrowRight,
-  Lock,
-  ShieldCheck,
-  TrendingUp,
-  Waypoints,
-} from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { BrandMark } from '../components/layout/AppChrome';
-import { Separator } from '../components/ui/primitives';
 
-const capabilities = [
+const bundles = [
   {
+    number: '01',
+    label: 'Privacy Bundle',
+    labelColor: 'text-accent',
+    title: 'Confidential identity, visible rails.',
     description:
-      'Groth16 proofs verify KYC, accreditation, jurisdiction, and source-of-funds compliance without revealing investor identity on-chain.',
-    icon: ShieldCheck,
-    title: 'ZK Compliance Engine',
+      'Zero-knowledge proofs verify KYC, accreditation, and jurisdiction without revealing investor identity on-chain. Travel Rule metadata is encrypted for authorized compliance review only.',
   },
   {
+    number: '02',
+    label: 'Compliance Bundle',
+    labelColor: 'text-success',
+    title: 'On-chain audit trail.',
     description:
-      'Circuit breakers, transaction limits, velocity checks, and deposit concentration controls enforce policy at the protocol level.',
-    icon: Waypoints,
-    title: 'Risk Controls',
+      'Every deposit, transfer, and withdrawal creates a TransferRecord. Source-of-funds demands flow through multisig-approved workflows. Compliance officers monitor the protocol without accessing private data.',
   },
   {
+    number: '03',
+    label: 'Risk Bundle',
+    labelColor: 'text-warning',
+    title: 'Protocol-level controls.',
     description:
-      'Whitelisted venue management, yield accrual accounting, and share-price appreciation tracked through a transparent on-chain model.',
-    icon: TrendingUp,
-    title: 'Yield Governance',
-  },
-  {
-    description:
-      'Pluggable custody provider abstraction supporting self-custody, Fireblocks, BitGo, and Anchorage configurations.',
-    icon: Lock,
-    title: 'Custody Architecture',
+      'Risk oracle integration with staleness checks, per-address risk scoring, circuit breakers, velocity controls, and deposit concentration limits enforced at the program level.',
   },
 ];
 
 const steps = [
-  {
-    heading: 'Credential Issuance',
-    description:
-      'Operators issue wallet-bound credentials encoding accreditation level, jurisdiction, and source-of-funds attestation.',
-  },
-  {
-    heading: 'Proof Generation',
-    description:
-      'Investors generate browser-side Groth16 proofs against the registry Merkle root and current vault thresholds.',
-  },
-  {
-    heading: 'On-chain Verification',
-    description:
-      'The vault program verifies the proof and encrypted Travel Rule metadata before executing deposits, transfers, or withdrawals.',
-  },
-  {
-    heading: 'Compliance Monitoring',
-    description:
-      'Compliance officers monitor TransferRecords, trigger multisig-approved decryption workflows, and investigate outliers.',
-  },
+  { label: 'Credential Issuance', description: 'Operators issue wallet-bound credentials encoding accreditation, jurisdiction, and source-of-funds attestation.' },
+  { label: 'Proof Generation', description: 'Investors generate browser-side Groth16 proofs against the registry Merkle root and current vault thresholds.' },
+  { label: 'On-chain Verification', description: 'The vault program verifies the proof and encrypted Travel Rule metadata before executing the transaction.' },
+  { label: 'Compliance Monitoring', description: 'Compliance officers monitor TransferRecords, trigger multisig-approved decryption, and investigate outliers.' },
 ];
 
 const proofPoints = [
-  'Solana',
+  'Built on Solana',
   'Groth16 Verified',
-  'Zero-Knowledge Proofs',
+  'ZK Compliance',
   'Institutional Grade',
 ];
 
@@ -70,29 +47,29 @@ export default function Landing() {
   return (
     <div className="min-h-screen">
       {/* ── Header ── */}
-      <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-bg-primary/80 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-10">
+      <header className="sticky top-0 z-40 border-b border-border-subtle" style={{ background: 'rgba(9,9,11,0.85)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}>
+        <div className="mx-auto flex max-w-[1200px] items-center justify-between px-6 py-4 lg:px-12">
           <BrandMark />
-          <div className="hidden items-center gap-8 text-sm text-text-secondary md:flex">
-            <a className="transition-colors hover:text-text-primary" href="#capabilities">
-              Capabilities
+          <div className="hidden items-center gap-8 text-[13px] text-text-tertiary md:flex">
+            <a className="transition-colors duration-150 hover:text-text-primary" href="#bundles">
+              Infrastructure
             </a>
-            <a className="transition-colors hover:text-text-primary" href="#architecture">
+            <a className="transition-colors duration-150 hover:text-text-primary" href="#architecture">
               Architecture
             </a>
           </div>
           <div className="flex items-center gap-3">
             <Link
-              className="hidden text-sm text-text-secondary transition-colors hover:text-text-primary sm:inline"
+              className="hidden text-[13px] text-text-secondary transition-colors duration-150 hover:text-text-primary sm:inline"
               to="/investor"
             >
-              Investor Portal
+              For Investors
             </Link>
             <Link
-              className="inline-flex h-10 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-5 text-sm font-medium text-text-primary transition-colors hover:bg-white/[0.08]"
-              to="/developer"
+              className="inline-flex h-10 items-center gap-2 rounded-lg bg-accent px-5 text-[13px] font-medium text-white transition-colors duration-150 hover:bg-accent-hover"
+              to="/institution"
             >
-              Developer Console
+              For Institutions
               <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
@@ -100,143 +77,189 @@ export default function Landing() {
       </header>
 
       {/* ── Hero ── */}
-      <section className="mx-auto max-w-7xl px-6 pb-28 pt-24 lg:px-10 lg:pt-32">
-        <p className="text-[11px] uppercase tracking-[0.28em] text-text-tertiary">
-          Zero-Knowledge Compliance Infrastructure
-        </p>
-        <h1 className="mt-6 max-w-4xl font-[var(--font-display)] text-[clamp(2.5rem,6vw,4.5rem)] font-medium leading-[1.05] tracking-[-0.04em] text-text-primary" style={{ fontFamily: 'var(--font-display)' }}>
-          Compliant infrastructure for institutional digital assets.
-        </h1>
-        <p className="mt-6 max-w-2xl text-lg leading-8 text-text-secondary">
-          A privacy-preserving vault protocol where zero-knowledge proofs replace identity disclosure.
-          Deposits, transfers, and withdrawals execute only when cryptographic compliance is verified on-chain.
-        </p>
-        <div className="mt-10 flex flex-wrap items-center gap-4">
-          <Link
-            className="inline-flex h-12 items-center gap-2 rounded-full bg-accent px-7 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
-            to="/developer"
-          >
-            Developer Console
-            <ArrowRight className="h-4 w-4" />
-          </Link>
-          <Link
-            className="inline-flex h-12 items-center gap-2 rounded-full border border-white/10 px-7 text-sm font-medium text-text-primary transition-colors hover:bg-white/[0.04]"
-            to="/investor"
-          >
-            Investor Portal
-            <ArrowRight className="h-4 w-4" />
-          </Link>
+      <section className="relative mx-auto max-w-[1200px] px-6 pb-24 pt-24 lg:px-12 lg:pt-32">
+        <div className="pointer-events-none absolute -left-32 -top-32 h-[600px] w-[600px] rounded-full" style={{ background: 'radial-gradient(circle, rgba(37,99,235,0.08) 0%, transparent 70%)' }} />
+        <div className="relative grid items-start gap-16 lg:grid-cols-[3fr_2fr]">
+          <div>
+            <p className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-text-tertiary">
+              Zero-Knowledge Compliance Infrastructure
+            </p>
+            <h1
+              className="mt-6 max-w-[560px] text-[clamp(2.5rem,5vw,4rem)] leading-[1.05] tracking-[-0.03em] text-text-primary"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              Compliant vaults for institutional capital.
+            </h1>
+            <p className="mt-6 max-w-[480px] text-lg leading-[1.7] text-text-secondary">
+              A privacy-preserving vault protocol on Solana where zero-knowledge proofs
+              replace identity disclosure. Deposits, transfers, and withdrawals execute
+              only when cryptographic compliance is verified on-chain.
+            </p>
+            <div className="mt-10 flex flex-wrap items-center gap-3">
+              <Link
+                className="inline-flex h-12 items-center gap-2 rounded-lg bg-accent px-7 text-[15px] font-medium text-white transition-colors duration-150 hover:bg-accent-hover"
+                to="/institution"
+              >
+                For Institutions
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                className="inline-flex h-12 items-center gap-2 rounded-lg border border-border px-7 text-[15px] font-medium text-text-primary transition-colors duration-150 hover:bg-surface"
+                to="/investor"
+              >
+                For Investors
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </div>
+          <div className="hidden lg:block">
+            <div className="flex h-[320px] items-center justify-center rounded-2xl border border-border bg-surface">
+              <span className="font-mono text-[11px] text-text-tertiary">[ ZK circuit visualization ]</span>
+            </div>
+          </div>
         </div>
       </section>
 
       {/* ── Social Proof Bar ── */}
-      <div className="border-y border-white/[0.06] bg-surface/40">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-center gap-x-8 gap-y-3 px-6 py-5 lg:px-10">
+      <div className="border-y border-border-subtle bg-surface">
+        <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-center gap-x-12 gap-y-3 px-6 py-4 lg:px-12">
           {proofPoints.map((point, i) => (
-            <span key={point} className="flex items-center gap-8 text-xs uppercase tracking-[0.2em] text-text-tertiary">
-              {i > 0 && <span className="mr-0 text-white/10">·</span>}
+            <span key={point} className="flex items-center gap-12 font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-text-tertiary">
+              {i > 0 && <span className="mr-0 text-border">·</span>}
               {point}
             </span>
           ))}
         </div>
       </div>
 
-      {/* ── Capabilities ── */}
-      <section className="mx-auto max-w-7xl px-6 py-28 lg:px-10" id="capabilities">
-        <p className="text-[11px] uppercase tracking-[0.28em] text-text-tertiary">Capabilities</p>
+      {/* ── Three Bundles ── */}
+      <section className="mx-auto max-w-[1200px] px-6 py-24 lg:px-12" id="bundles">
+        <p className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-text-tertiary">
+          What VaultProof Provides
+        </p>
         <h2
-          className="mt-4 max-w-2xl text-4xl font-medium leading-[1.1] tracking-[-0.03em] text-text-primary sm:text-5xl"
+          className="mt-4 max-w-[480px] text-[clamp(2rem,4vw,3rem)] leading-[1.1] tracking-[-0.03em] text-text-primary"
           style={{ fontFamily: 'var(--font-display)' }}
         >
-          Built for regulated institutions, not retail demos.
+          Three layers of institutional trust.
         </h2>
 
-        <div className="mt-14 grid gap-5 sm:grid-cols-2">
-          {capabilities.map((cap) => {
-            const Icon = cap.icon;
-            return (
-              <div
-                key={cap.title}
-                className="rounded-2xl bg-surface p-8 transition-colors hover:bg-elevated/60"
-              >
-                <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-full border border-white/[0.08] bg-elevated">
-                  <Icon className="h-5 w-5 text-text-primary" />
-                </div>
-                <h3 className="text-lg font-semibold text-text-primary">{cap.title}</h3>
-                <p className="mt-2 text-sm leading-7 text-text-secondary">{cap.description}</p>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <Separator />
-
-      {/* ── Architecture ── */}
-      <section className="mx-auto max-w-7xl px-6 py-28 lg:px-10" id="architecture">
-        <p className="text-[11px] uppercase tracking-[0.28em] text-text-tertiary">Architecture</p>
-        <h2
-          className="mt-4 max-w-2xl text-4xl font-medium leading-[1.1] tracking-[-0.03em] text-text-primary sm:text-5xl"
-          style={{ fontFamily: 'var(--font-display)' }}
-        >
-          How VaultProof works
-        </h2>
-
-        <div className="mt-14 grid gap-6 lg:grid-cols-2">
-          {steps.map((step, i) => (
+        <div className="mt-16 space-y-0">
+          {bundles.map((bundle, i) => (
             <div
-              key={step.heading}
-              className="flex gap-5 rounded-2xl bg-surface p-8"
+              key={bundle.number}
+              className={`grid items-center gap-12 py-12 lg:grid-cols-2 ${i > 0 ? 'border-t border-border-subtle' : ''}`}
             >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/[0.08] bg-elevated text-sm font-medium text-text-secondary">
-                {String(i + 1).padStart(2, '0')}
-              </div>
               <div>
-                <h3 className="text-base font-semibold text-text-primary">{step.heading}</h3>
-                <p className="mt-2 text-sm leading-7 text-text-secondary">{step.description}</p>
+                <p className={`font-mono text-[11px] font-medium uppercase tracking-[0.12em] ${bundle.labelColor}`}>
+                  {bundle.number} / {bundle.label}
+                </p>
+                <h3
+                  className="mt-3 text-[clamp(1.5rem,3vw,2.25rem)] leading-[1.15] tracking-[-0.02em] text-text-primary"
+                  style={{ fontFamily: 'var(--font-display)' }}
+                >
+                  {bundle.title}
+                </h3>
+                <p className="mt-4 max-w-[440px] text-[15px] leading-[1.7] text-text-secondary">
+                  {bundle.description}
+                </p>
+              </div>
+              <div className="flex h-[200px] items-center justify-center rounded-xl border border-border bg-surface">
+                <span className="font-mono text-[11px] text-text-tertiary">[ {bundle.label} diagram ]</span>
               </div>
             </div>
           ))}
         </div>
       </section>
 
-      {/* ── CTA ── */}
-      <section className="border-t border-white/[0.06] bg-surface/40">
-        <div className="mx-auto max-w-7xl px-6 py-24 text-center lg:px-10">
+      {/* ── Architecture ── */}
+      <section className="border-t border-border-subtle" id="architecture">
+        <div className="mx-auto max-w-[1200px] px-6 py-24 lg:px-12">
+          <p className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-text-tertiary">
+            Architecture
+          </p>
           <h2
-            className="mx-auto max-w-xl text-3xl font-medium leading-[1.1] tracking-[-0.03em] text-text-primary sm:text-4xl"
+            className="mt-4 max-w-[480px] text-[clamp(2rem,4vw,3rem)] leading-[1.1] tracking-[-0.03em] text-text-primary"
             style={{ fontFamily: 'var(--font-display)' }}
           >
-            Start building with VaultProof.
+            How VaultProof works
           </h2>
-          <p className="mx-auto mt-4 max-w-lg text-sm leading-7 text-text-secondary">
-            Connect a wallet and explore the developer console or investor portal.
-            All proof generation happens in your browser — nothing leaves the client.
-          </p>
-          <div className="mt-8 flex flex-wrap justify-center gap-4">
-            <Link
-              className="inline-flex h-12 items-center gap-2 rounded-full bg-accent px-7 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
-              to="/developer"
-            >
-              Developer Console
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-            <Link
-              className="inline-flex h-12 items-center gap-2 rounded-full border border-white/10 px-7 text-sm font-medium text-text-primary transition-colors hover:bg-white/[0.04]"
-              to="/investor"
-            >
-              Investor Portal
-              <ArrowRight className="h-4 w-4" />
-            </Link>
+
+          <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {steps.map((step, i) => (
+              <div key={step.label} className="relative">
+                <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-elevated font-mono text-sm text-text-secondary">
+                  {String(i + 1).padStart(2, '0')}
+                </div>
+                <h3 className="text-[15px] font-semibold text-text-primary">{step.label}</h3>
+                <p className="mt-2 text-[13px] leading-[1.7] text-text-secondary">{step.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Split CTA ── */}
+      <section className="border-t border-border-subtle">
+        <div className="mx-auto max-w-[1200px] px-6 py-24 lg:px-12">
+          <div className="grid overflow-hidden rounded-2xl border border-border-subtle lg:grid-cols-2">
+            <div className="flex flex-col gap-4 bg-bg-primary p-12 lg:p-16">
+              <p className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-text-tertiary">
+                For Institutions
+              </p>
+              <h3
+                className="text-[clamp(1.5rem,3vw,2.25rem)] leading-[1.15] tracking-[-0.02em] text-text-primary"
+                style={{ fontFamily: 'var(--font-display)' }}
+              >
+                Operate a compliant vault.
+              </h3>
+              <p className="max-w-[380px] text-[15px] leading-[1.7] text-text-secondary">
+                Deploy permissioned vaults with built-in ZK compliance, risk controls,
+                and regulatory infrastructure. No identity data ever touches the chain.
+              </p>
+              <div className="mt-4">
+                <Link
+                  className="inline-flex h-12 items-center gap-2 rounded-lg bg-accent px-7 text-[15px] font-medium text-white transition-colors duration-150 hover:bg-accent-hover"
+                  to="/institution"
+                >
+                  Launch Institution Console
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
+            </div>
+            <div className="flex flex-col gap-4 border-t border-border-subtle bg-surface p-12 lg:border-l lg:border-t-0 lg:p-16">
+              <p className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-text-tertiary">
+                For Investors
+              </p>
+              <h3
+                className="text-[clamp(1.5rem,3vw,2.25rem)] leading-[1.15] tracking-[-0.02em] text-text-primary"
+                style={{ fontFamily: 'var(--font-display)' }}
+              >
+                Access institutional yield.
+              </h3>
+              <p className="max-w-[380px] text-[15px] leading-[1.7] text-text-secondary">
+                Generate privacy-preserving credentials and participate in institutional
+                vaults. Your compliance is proven cryptographically — your identity stays private.
+              </p>
+              <div className="mt-4">
+                <Link
+                  className="inline-flex h-12 items-center gap-2 rounded-lg border border-border px-7 text-[15px] font-medium text-text-primary transition-colors duration-150 hover:bg-elevated"
+                  to="/investor"
+                >
+                  Enter Investor Portal
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
       {/* ── Footer ── */}
-      <footer className="border-t border-white/[0.06]">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-6 lg:px-10">
+      <footer className="border-t border-border-subtle">
+        <div className="mx-auto flex max-w-[1200px] items-center justify-between px-6 py-6 lg:px-12">
           <BrandMark />
-          <p className="text-xs text-text-tertiary">&copy; {new Date().getFullYear()} VaultProof</p>
+          <p className="font-mono text-[11px] text-text-tertiary">&copy; {new Date().getFullYear()} VaultProof</p>
         </div>
       </footer>
     </div>

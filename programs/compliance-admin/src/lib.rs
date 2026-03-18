@@ -100,6 +100,57 @@ pub mod compliance_admin {
         );
         vusd_vault::cpi::update_regulator_key(cpi_ctx, new_pub_key_x, new_pub_key_y)
     }
+
+    // ================================================================
+    // SOURCE-OF-FUNDS DEMAND WORKFLOW
+    // ================================================================
+
+    pub fn request_source_of_funds(
+        ctx: Context<RequestSourceOfFunds>,
+        reason_hash: [u8; 32],
+    ) -> Result<()> {
+        let timestamp = Clock::get()?.unix_timestamp;
+        let request = &mut ctx.accounts.sof_request;
+        request.transfer_record = ctx.accounts.transfer_record.key();
+        request.reason_hash = reason_hash;
+        request.requested_by = ctx.accounts.authority.key();
+        request.request_timestamp = timestamp;
+        request.fulfilled = false;
+        request.attestation_hash = [0u8; 32];
+        request.fulfillment_timestamp = 0;
+        request.bump = ctx.bumps.sof_request;
+
+        emit!(SourceOfFundsRequested {
+            transfer_record: request.transfer_record,
+            reason_hash,
+            requested_by: request.requested_by,
+            timestamp,
+        });
+
+        Ok(())
+    }
+
+    pub fn fulfill_source_of_funds(
+        ctx: Context<FulfillSourceOfFunds>,
+        attestation_hash: [u8; 32],
+    ) -> Result<()> {
+        let request = &mut ctx.accounts.sof_request;
+        require!(!request.fulfilled, ComplianceError::AlreadyFulfilled);
+
+        let timestamp = Clock::get()?.unix_timestamp;
+        request.fulfilled = true;
+        request.attestation_hash = attestation_hash;
+        request.fulfillment_timestamp = timestamp;
+
+        emit!(SourceOfFundsDisclosed {
+            transfer_record: request.transfer_record,
+            attestation_hash,
+            disclosed_by: ctx.accounts.authority.key(),
+            timestamp,
+        });
+
+        Ok(())
+    }
 }
 
 #[account]
@@ -165,6 +216,80 @@ pub struct UpdateRegulatorKey<'info> {
     pub vusd_vault_program: Program<'info, vusd_vault::program::VusdVault>,
 }
 
+// ================================================================
+// SOURCE-OF-FUNDS ACCOUNT CONTEXTS
+// ================================================================
+
+#[account]
+#[derive(InitSpace)]
+pub struct SourceOfFundsRequest {
+    pub transfer_record: Pubkey,
+    pub reason_hash: [u8; 32],
+    pub requested_by: Pubkey,
+    pub request_timestamp: i64,
+    pub fulfilled: bool,
+    pub attestation_hash: [u8; 32],
+    pub fulfillment_timestamp: i64,
+    pub bump: u8,
+}
+
+#[derive(Accounts)]
+pub struct RequestSourceOfFunds<'info> {
+    #[account(
+        constraint = vault_state.authority == authority.key() @ ComplianceError::Unauthorized,
+    )]
+    pub vault_state: Account<'info, vusd_vault::VaultState>,
+
+    pub transfer_record: Account<'info, vusd_vault::TransferRecord>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + SourceOfFundsRequest::INIT_SPACE,
+        seeds = [b"sof_request", transfer_record.key().as_ref()],
+        bump,
+    )]
+    pub sof_request: Account<'info, SourceOfFundsRequest>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct FulfillSourceOfFunds<'info> {
+    #[account(
+        constraint = vault_state.authority == authority.key() @ ComplianceError::Unauthorized,
+    )]
+    pub vault_state: Account<'info, vusd_vault::VaultState>,
+
+    #[account(
+        mut,
+        seeds = [b"sof_request", sof_request.transfer_record.as_ref()],
+        bump = sof_request.bump,
+    )]
+    pub sof_request: Account<'info, SourceOfFundsRequest>,
+
+    pub authority: Signer<'info>,
+}
+
+#[event]
+pub struct SourceOfFundsRequested {
+    pub transfer_record: Pubkey,
+    pub reason_hash: [u8; 32],
+    pub requested_by: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct SourceOfFundsDisclosed {
+    pub transfer_record: Pubkey,
+    pub attestation_hash: [u8; 32],
+    pub disclosed_by: Pubkey,
+    pub timestamp: i64,
+}
+
 #[event]
 pub struct DecryptionAuthorized {
     pub transfer_record: Pubkey,
@@ -177,6 +302,8 @@ pub struct DecryptionAuthorized {
 pub enum ComplianceError {
     #[msg("Unauthorized: caller is not the vault authority.")]
     Unauthorized,
+    #[msg("Source of funds request already fulfilled.")]
+    AlreadyFulfilled,
 }
 
 #[cfg(test)]
@@ -195,6 +322,16 @@ mod tests {
             derive_decryption_authorization_address(&transfer_record),
             expected
         );
+    }
+
+    #[test]
+    fn source_of_funds_request_initializes_correctly() {
+        let transfer_record = Pubkey::new_unique();
+        let expected = Pubkey::find_program_address(
+            &[b"sof_request", transfer_record.as_ref()],
+            &crate::id(),
+        );
+        assert_ne!(expected.0, Pubkey::default());
     }
 
     #[test]

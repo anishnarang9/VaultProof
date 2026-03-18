@@ -128,7 +128,7 @@ export default function Compliance() {
                   <TableRow
                     key={record.address.toBase58()}
                     className="cursor-pointer"
-                    onClick={() => navigate(`/developer/compliance/${record.address.toBase58()}`)}
+                    onClick={() => navigate(`/institution/compliance/${record.address.toBase58()}`)}
                   >
                     <TableCell className="text-text-primary">{record.transferType}</TableCell>
                     <TableCell>{formatCurrency(record.amount)}</TableCell>

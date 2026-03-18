@@ -143,23 +143,23 @@ describe('role routing and landing page', () => {
 
     expect(
       screen.getByRole('heading', {
-        name: /compliant infrastructure for institutional digital assets/i,
+        name: /compliant vaults for institutional capital/i,
       }),
     ).toBeInTheDocument();
-    expect(screen.getAllByRole('link', { name: /developer console/i }).length).toBeGreaterThan(0);
-    expect(screen.getAllByRole('link', { name: /investor portal/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('link', { name: /for institutions/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('link', { name: /for investors/i }).length).toBeGreaterThan(0);
   });
 
-  it('renders the developer console at /developer', () => {
+  it('renders the institution console at /institution', () => {
     mockState.current = 'authority';
 
     render(
-      <MemoryRouter initialEntries={['/developer']}>
+      <MemoryRouter initialEntries={['/institution']}>
         <AppShell />
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/developer console/i)).toBeInTheDocument();
+    expect(screen.getByText(/institution console/i)).toBeInTheDocument();
     expect(screen.getByText(/daily outflow threshold/i)).toBeInTheDocument();
   });
 

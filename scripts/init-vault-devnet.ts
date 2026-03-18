@@ -23,6 +23,7 @@ type InitializedVault = {
   authority: PublicKey;
   usdcMint: PublicKey;
   usdcReservePda: PublicKey;
+  riskOraclePda: PublicKey;
   vaultProgram: anchor.Program<any>;
   vaultState: any;
   vaultStatePda: PublicKey;
@@ -169,6 +170,25 @@ export async function initializeDevnetVault(): Promise<InitializedVault> {
       .rpc();
   }
 
+  // Initialize Risk Oracle (required — strict mode)
+  const [riskOraclePda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("risk_oracle"), vaultStatePda.toBuffer()],
+    vaultProgram.programId,
+  );
+  const existingRiskOracle = await provider.connection.getAccountInfo(riskOraclePda, "confirmed");
+  if (!existingRiskOracle) {
+    await (vaultProgram.methods as any)
+      .initializeRiskOracle(authority)
+      .accounts({
+        authority,
+        riskOracle: riskOraclePda,
+        systemProgram: SystemProgram.programId,
+        vaultState: vaultStatePda,
+      })
+      .rpc();
+    console.log(`Risk oracle initialized: ${riskOraclePda.toBase58()}`);
+  }
+
   vaultState = await (vaultProgram.account as any).vaultState.fetch(vaultStatePda);
   if (BigInt(vaultState.totalYieldEarned.toString()) === 0n) {
     await (vaultProgram.methods as any)
@@ -192,6 +212,7 @@ export async function initializeDevnetVault(): Promise<InitializedVault> {
     authority,
     usdcMint,
     usdcReservePda,
+    riskOraclePda,
     vaultProgram,
     vaultState,
     vaultStatePda,
@@ -210,6 +231,7 @@ async function main() {
   console.log(`USDC mint: ${result.usdcMint.toBase58()}`);
   console.log(`Yield venue: ${result.yieldVenuePda.toBase58()}`);
   console.log(`Circuit breaker threshold: ${result.vaultState.circuitBreakerThreshold.toString()}`);
+  console.log(`Risk oracle: ${result.riskOraclePda.toBase58()}`);
   console.log(`Total yield earned: ${result.vaultState.totalYieldEarned.toString()}`);
 }
 

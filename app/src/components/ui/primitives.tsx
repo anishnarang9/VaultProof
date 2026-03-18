@@ -27,7 +27,7 @@ export function Button({
   return (
     <button
       className={cn(
-        'inline-flex items-center justify-center gap-2 rounded-full border text-sm font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:pointer-events-none disabled:opacity-45',
+        'inline-flex items-center justify-center gap-2 rounded-lg border text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:pointer-events-none disabled:opacity-45',
         variant === 'default' && 'border-transparent bg-accent text-white hover:bg-accent-hover',
         variant === 'secondary' && 'border-border bg-surface text-text-primary hover:bg-elevated',
         variant === 'outline' &&
@@ -92,7 +92,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.18em]',
+        'inline-flex items-center rounded-md border px-2.5 py-1 text-[11px] font-medium uppercase tracking-[0.12em]',
         variant === 'accent' && 'border-accent/30 bg-accent/12 text-accent',
         variant === 'secondary' && 'border-border bg-elevated text-text-secondary',
         variant === 'outline' && 'border-border text-text-tertiary',
@@ -139,7 +139,7 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
   return (
     <input
       className={cn(
-        'h-11 w-full rounded-[var(--radius)] border border-border bg-bg-primary px-4 text-sm text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-white/16',
+        'h-11 w-full rounded-lg border border-border bg-bg-primary px-4 text-sm text-text-primary outline-none transition-colors duration-150 placeholder:text-text-tertiary focus:border-accent',
         className,
       )}
       {...props}
@@ -163,7 +163,7 @@ export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectE
   return (
     <select
       className={cn(
-        'h-11 w-full appearance-none rounded-[var(--radius)] border border-border bg-bg-primary px-4 text-sm text-text-primary outline-none transition-colors focus:border-white/16',
+        'h-11 w-full appearance-none rounded-lg border border-border bg-bg-primary px-4 text-sm text-text-primary outline-none transition-colors duration-150 focus:border-accent',
         className,
       )}
       {...props}
@@ -304,7 +304,7 @@ export function TabsList({ className, ...props }: HTMLAttributes<HTMLDivElement>
   return (
     <div
       className={cn(
-        'inline-flex rounded-full border border-border bg-surface p-1',
+        'inline-flex rounded-lg border border-border bg-surface p-1',
         className,
       )}
       {...props}
@@ -327,7 +327,7 @@ export function TabsTrigger({
   return (
     <button
       className={cn(
-        'rounded-full px-4 py-2 text-xs font-medium uppercase tracking-[0.18em] transition-colors',
+        'rounded-md px-4 py-2 text-xs font-medium uppercase tracking-[0.12em] transition-colors duration-150',
         active ? 'bg-elevated text-text-primary' : 'text-text-tertiary hover:text-text-primary',
         className,
       )}

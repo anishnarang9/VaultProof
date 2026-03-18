@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VaultProof — Design System Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif&display=swap" rel="stylesheet" />
+<style>
+  /* ── Geist fonts (self-hosted from CDN) ── */
+  @font-face {
+    font-family: 'Geist';
+    src: url('https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Geist';
+    src: url('https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Medium.woff2') format('woff2');
+    font-weight: 500;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Geist';
+    src: url('https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-SemiBold.woff2') format('woff2');
+    font-weight: 600;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Geist Mono';
+    src: url('https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/GeistMono-Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Geist Mono';
+    src: url('https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/GeistMono-Medium.woff2') format('woff2');
+    font-weight: 500;
+    font-display: swap;
+  }
+
+  :root {
+    --bg-primary: #09090B;
+    --bg-surface: #18181B;
+    --bg-elevated: #27272A;
+    --border: #27272A;
+    --border-subtle: #1E1E22;
+    --text-primary: #FAFAFA;
+    --text-secondary: #A1A1AA;
+    --text-tertiary: #71717A;
+    --accent: #2563EB;
+    --accent-hover: #1D4ED8;
+    --success: #10B981;
+    --warning: #F59E0B;
+    --danger: #EF4444;
+    --font-display: 'Instrument Serif', Georgia, serif;
+    --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'Geist Mono', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Utility ── */
+  .container { max-width: 1200px; margin: 0 auto; padding: 0 48px; }
+  .section { padding: 96px 0; }
+  .section + .section { border-top: 1px solid var(--border-subtle); }
+  .label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+  .mt-4 { margin-top: 4px; }
+  .mt-8 { margin-top: 8px; }
+  .mt-12 { margin-top: 12px; }
+  .mt-16 { margin-top: 16px; }
+  .mt-24 { margin-top: 24px; }
+  .mt-32 { margin-top: 32px; }
+  .mt-48 { margin-top: 48px; }
+  .mt-64 { margin-top: 64px; }
+
+  /* ── Header ── */
+  .preview-header {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    border-bottom: 1px solid var(--border-subtle);
+    background: rgba(9,9,11,0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .preview-header .container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 64px;
+  }
+  .preview-header nav { display: flex; gap: 32px; }
+  .preview-header nav a {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    text-decoration: none;
+    transition: color 150ms ease-out;
+  }
+  .preview-header nav a:hover { color: var(--text-primary); }
+  .brand {
+    font-family: var(--font-display);
+    font-size: 24px;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+  }
+
+  /* ── Hero mock ── */
+  .hero {
+    padding: 96px 0 80px;
+    position: relative;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: -80px;
+    left: 0;
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(37,99,235,0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 3fr 2fr;
+    gap: 64px;
+    align-items: start;
+  }
+  .hero h1 {
+    font-family: var(--font-display);
+    font-size: 64px;
+    font-weight: 400;
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    color: var(--text-primary);
+  }
+  .hero p {
+    font-size: 18px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+    max-width: 540px;
+  }
+  .hero-ctas { display: flex; gap: 12px; }
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 48px;
+    padding: 0 28px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 150ms ease-out;
+  }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    height: 48px;
+    padding: 0 28px;
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 150ms ease-out, border-color 150ms ease-out;
+  }
+  .btn-ghost:hover { background: var(--bg-surface); border-color: var(--text-tertiary); }
+
+  /* ── Social proof bar ── */
+  .proof-bar {
+    border-top: 1px solid var(--border-subtle);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+  }
+  .proof-bar .container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 48px;
+    height: 56px;
+  }
+  .proof-bar span {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+  .proof-bar .dot { color: var(--border); }
+
+  /* ── Bundle section ── */
+  .bundle-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 48px;
+    align-items: center;
+    padding: 48px 0;
+  }
+  .bundle-row + .bundle-row { border-top: 1px solid var(--border-subtle); }
+  .bundle-row h3 {
+    font-family: var(--font-display);
+    font-size: 36px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+  }
+  .bundle-row p {
+    font-size: 15px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+  }
+  .bundle-diagram {
+    height: 200px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+
+  /* ── Split CTA ── */
+  .split-cta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border-subtle);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+  .split-panel {
+    padding: 64px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .split-panel.dark { background: var(--bg-primary); }
+  .split-panel.mid { background: var(--bg-surface); }
+  .split-panel h3 {
+    font-family: var(--font-display);
+    font-size: 36px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+  }
+  .split-panel p {
+    font-size: 15px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    max-width: 380px;
+  }
+
+  /* ── Color swatches ── */
+  .swatch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+  }
+  .swatch {
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle);
+  }
+  .swatch-color {
+    height: 72px;
+  }
+  .swatch-meta {
+    padding: 12px;
+    background: var(--bg-surface);
+  }
+  .swatch-meta .name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+  .swatch-meta .hex {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+  }
+
+  /* ── Typography scale ── */
+  .type-row {
+    display: flex;
+    align-items: baseline;
+    gap: 32px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .type-size {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    width: 80px;
+    flex-shrink: 0;
+  }
+
+  /* ── Spacing ── */
+  .spacing-grid {
+    display: flex;
+    align-items: flex-end;
+    gap: 16px;
+    padding: 32px 0;
+  }
+  .spacing-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .spacing-block .bar {
+    background: var(--accent);
+    border-radius: 4px;
+    width: 32px;
+    opacity: 0.7;
+  }
+  .spacing-block .val {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+  }
+
+  /* ── Motion demo ── */
+  .motion-demo {
+    display: flex;
+    gap: 24px;
+    padding: 32px 0;
+  }
+  .motion-box {
+    width: 120px;
+    height: 120px;
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-family: var(--font-mono);
+  }
+  .motion-box.fast { transition: all 150ms ease-out; }
+  .motion-box.medium { transition: all 250ms ease-out; }
+  .motion-box.fast:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+  .motion-box.medium:hover {
+    background: var(--bg-elevated);
+    border-color: var(--text-tertiary);
+    color: var(--text-primary);
+  }
+
+  /* ── Component samples ── */
+  .component-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 32px;
+  }
+  .card h4 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .card p {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+  }
+
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border-subtle);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--bg-surface);
+    padding: 24px;
+    text-align: center;
+  }
+  .stat .value {
+    font-family: var(--font-sans);
+    font-size: 36px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .stat-label {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    margin-top: 4px;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .badge.success { background: rgba(16,185,129,0.12); color: var(--success); }
+  .badge.warning { background: rgba(245,158,11,0.12); color: var(--warning); }
+  .badge.danger { background: rgba(239,68,68,0.12); color: var(--danger); }
+  .badge.neutral { background: var(--bg-elevated); color: var(--text-secondary); }
+
+  .input-demo {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .input-demo label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+  .input-demo input {
+    height: 44px;
+    padding: 0 16px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    outline: none;
+    transition: border-color 150ms ease-out;
+  }
+  .input-demo input:focus { border-color: var(--accent); }
+  .input-demo input::placeholder { color: var(--text-tertiary); }
+
+  /* ── Footer ── */
+  .preview-footer {
+    border-top: 1px solid var(--border-subtle);
+    padding: 32px 0;
+    text-align: center;
+  }
+  .preview-footer p {
+    font-size: 12px;
+    color: var(--text-tertiary);
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     HEADER — Sticky, blurred, minimal
+     ══════════════════════════════════════════════════════════ -->
+<header class="preview-header">
+  <div class="container">
+    <span class="brand">VaultProof</span>
+    <nav>
+      <a href="#hero">Hero</a>
+      <a href="#colors">Colors</a>
+      <a href="#typography">Typography</a>
+      <a href="#spacing">Spacing</a>
+      <a href="#motion">Motion</a>
+      <a href="#components">Components</a>
+      <a href="#landing">Landing Mock</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════════════
+     TITLE
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" style="padding-bottom: 48px;">
+  <div class="container">
+    <p class="label">Design System Preview</p>
+    <h1 style="font-family: var(--font-display); font-size: 48px; font-weight: 400; letter-spacing: -0.03em; margin-top: 16px;">
+      VaultProof Design System
+    </h1>
+    <p style="font-size: 18px; color: var(--text-secondary); margin-top: 12px; max-width: 600px; line-height: 1.7;">
+      Luxury dark aesthetic. Instrument Serif + Geist. Built for institutional trust.
+    </p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     COLORS
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="colors">
+  <div class="container">
+    <p class="label">01 / Color Palette</p>
+    <h2 style="font-family: var(--font-display); font-size: 36px; margin-top: 12px;">
+      Restrained. One accent, zinc neutrals.
+    </h2>
+
+    <div class="swatch-grid mt-48">
+      <div class="swatch">
+        <div class="swatch-color" style="background: #09090B;"></div>
+        <div class="swatch-meta"><div class="name">Primary BG</div><div class="hex">#09090B</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #18181B;"></div>
+        <div class="swatch-meta"><div class="name">Surface</div><div class="hex">#18181B</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #27272A;"></div>
+        <div class="swatch-meta"><div class="name">Elevated</div><div class="hex">#27272A</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #3F3F46;"></div>
+        <div class="swatch-meta"><div class="name">Border Strong</div><div class="hex">#3F3F46</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #71717A;"></div>
+        <div class="swatch-meta"><div class="name">Text Tertiary</div><div class="hex">#71717A</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #A1A1AA;"></div>
+        <div class="swatch-meta"><div class="name">Text Secondary</div><div class="hex">#A1A1AA</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #FAFAFA;"></div>
+        <div class="swatch-meta"><div class="name">Text Primary</div><div class="hex">#FAFAFA</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #2563EB;"></div>
+        <div class="swatch-meta"><div class="name">Accent</div><div class="hex">#2563EB</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #1D4ED8;"></div>
+        <div class="swatch-meta"><div class="name">Accent Hover</div><div class="hex">#1D4ED8</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #10B981;"></div>
+        <div class="swatch-meta"><div class="name">Success</div><div class="hex">#10B981</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #F59E0B;"></div>
+        <div class="swatch-meta"><div class="name">Warning</div><div class="hex">#F59E0B</div></div>
+      </div>
+      <div class="swatch">
+        <div class="swatch-color" style="background: #EF4444;"></div>
+        <div class="swatch-meta"><div class="name">Danger</div><div class="hex">#EF4444</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     TYPOGRAPHY
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="typography">
+  <div class="container">
+    <p class="label">02 / Typography</p>
+    <h2 style="font-family: var(--font-display); font-size: 36px; margin-top: 12px;">
+      Instrument Serif + Geist + Geist Mono
+    </h2>
+
+    <div class="mt-48">
+      <div class="type-row">
+        <span class="type-size">64px Display</span>
+        <span style="font-family: var(--font-display); font-size: 64px; line-height: 1.05; letter-spacing: -0.03em;">Compliant vaults.</span>
+      </div>
+      <div class="type-row">
+        <span class="type-size">48px Display</span>
+        <span style="font-family: var(--font-display); font-size: 48px; line-height: 1.1; letter-spacing: -0.03em;">Privacy infrastructure</span>
+      </div>
+      <div class="type-row">
+        <span class="type-size">36px Display</span>
+        <span style="font-family: var(--font-display); font-size: 36px; line-height: 1.15; letter-spacing: -0.02em;">Zero-knowledge compliance</span>
+      </div>
+      <div class="type-row">
+        <span class="type-size">24px Heading</span>
+        <span style="font-family: var(--font-sans); font-size: 24px; font-weight: 600; letter-spacing: -0.02em;">Vault Configuration</span>
+      </div>
+      <div class="type-row">
+        <span class="type-size">18px Subhead</span>
+        <span style="font-family: var(--font-sans); font-size: 18px; color: var(--text-secondary);">A privacy-preserving vault protocol where zero-knowledge proofs replace identity disclosure.</span>
+      </div>
+      <div class="type-row">
+        <span class="type-size">15px Body</span>
+        <span style="font-family: var(--font-sans); font-size: 15px; color: var(--text-secondary);">Deposits, transfers, and withdrawals execute only when cryptographic compliance is verified on-chain.</span>
+      </div>
+      <div class="type-row">
+        <span class="type-size">13px Small</span>
+        <span style="font-family: var(--font-sans); font-size: 13px; color: var(--text-tertiary);">Last verified 2 minutes ago. Proof generation happens in your browser.</span>
+      </div>
+      <div class="type-row">
+        <span class="type-size">11px Micro</span>
+        <span style="font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-tertiary);">ZERO-KNOWLEDGE COMPLIANCE INFRASTRUCTURE</span>
+      </div>
+      <div class="type-row">
+        <span class="type-size">15px Mono</span>
+        <span style="font-family: var(--font-mono); font-size: 15px; color: var(--text-secondary);">CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu</span>
+      </div>
+      <div class="type-row">
+        <span class="type-size">36px Tabular</span>
+        <span style="font-family: var(--font-sans); font-size: 36px; font-weight: 600; font-variant-numeric: tabular-nums;">$12,847,392.00</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     SPACING
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="spacing">
+  <div class="container">
+    <p class="label">03 / Spacing Scale</p>
+    <h2 style="font-family: var(--font-display); font-size: 36px; margin-top: 12px;">
+      4px base, comfortable density.
+    </h2>
+    <div class="spacing-grid">
+      <div class="spacing-block"><div class="bar" style="height: 4px;"></div><span class="val">4</span></div>
+      <div class="spacing-block"><div class="bar" style="height: 8px;"></div><span class="val">8</span></div>
+      <div class="spacing-block"><div class="bar" style="height: 12px;"></div><span class="val">12</span></div>
+      <div class="spacing-block"><div class="bar" style="height: 16px;"></div><span class="val">16</span></div>
+      <div class="spacing-block"><div class="bar" style="height: 24px;"></div><span class="val">24</span></div>
+      <div class="spacing-block"><div class="bar" style="height: 32px;"></div><span class="val">32</span></div>
+      <div class="spacing-block"><div class="bar" style="height: 48px;"></div><span class="val">48</span></div>
+      <div class="spacing-block"><div class="bar" style="height: 64px;"></div><span class="val">64</span></div>
+      <div class="spacing-block"><div class="bar" style="height: 96px;"></div><span class="val">96</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     MOTION
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="motion">
+  <div class="container">
+    <p class="label">04 / Motion</p>
+    <h2 style="font-family: var(--font-display); font-size: 36px; margin-top: 12px;">
+      Minimal-functional. No bounce.
+    </h2>
+    <div class="motion-demo">
+      <div class="motion-box fast">
+        <span>150ms</span>
+        <span style="color: var(--text-tertiary);">ease-out</span>
+        <span style="color: var(--text-tertiary);">hover</span>
+      </div>
+      <div class="motion-box medium">
+        <span>250ms</span>
+        <span style="color: var(--text-tertiary);">ease-out</span>
+        <span style="color: var(--text-tertiary);">transition</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     COMPONENTS
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="components">
+  <div class="container">
+    <p class="label">05 / Component Samples</p>
+    <h2 style="font-family: var(--font-display); font-size: 36px; margin-top: 12px;">
+      Buttons, badges, cards, inputs.
+    </h2>
+
+    <!-- Buttons -->
+    <div class="mt-48" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+      <button class="btn-primary">Connect Wallet</button>
+      <button class="btn-primary" style="background: var(--success);">Deposit Approved</button>
+      <button class="btn-ghost">View Compliance</button>
+      <button class="btn-ghost" style="opacity: 0.5; cursor: not-allowed;">Pending Verification</button>
+    </div>
+
+    <!-- Badges -->
+    <div class="mt-32" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+      <span class="badge success">Verified</span>
+      <span class="badge warning">Pending Review</span>
+      <span class="badge danger">Risk Alert</span>
+      <span class="badge neutral">Draft</span>
+    </div>
+
+    <!-- Stats -->
+    <div class="stat-row mt-32">
+      <div class="stat">
+        <div class="value">$4.2M</div>
+        <div class="stat-label">Total Value Locked</div>
+      </div>
+      <div class="stat">
+        <div class="value">142</div>
+        <div class="stat-label">Verified Credentials</div>
+      </div>
+      <div class="stat">
+        <div class="value">38</div>
+        <div class="stat-label">Transfer Records</div>
+      </div>
+      <div class="stat">
+        <div class="value">5.2%</div>
+        <div class="stat-label">Share Price APY</div>
+      </div>
+    </div>
+
+    <!-- Cards + Input -->
+    <div class="component-grid mt-32">
+      <div class="card">
+        <h4>Privacy Bundle</h4>
+        <p class="mt-8">Zero-knowledge proofs verify investor compliance without revealing identity, jurisdiction, or accreditation details on-chain.</p>
+        <button class="btn-ghost mt-24" style="height: 40px; font-size: 13px;">Learn more</button>
+      </div>
+      <div class="card">
+        <div class="input-demo">
+          <label>Deposit Amount (USDC)</label>
+          <input type="text" placeholder="0.00" />
+          <label class="mt-12">Mandate ID</label>
+          <input type="text" placeholder="e.g. FUND-2026-001" />
+          <button class="btn-primary mt-16" style="width: 100%; justify-content: center;">Generate Proof & Deposit</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mono / Code block -->
+    <div class="card mt-32" style="padding: 24px;">
+      <p class="label" style="margin-bottom: 12px;">Program Address</p>
+      <code style="font-family: var(--font-mono); font-size: 14px; color: var(--text-secondary); word-break: break-all;">
+        CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu
+      </code>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     LANDING MOCK
+     ══════════════════════════════════════════════════════════ -->
+<div class="section" id="landing" style="background: var(--bg-primary);">
+  <div class="container">
+    <p class="label">06 / Landing Page Mock</p>
+    <h2 style="font-family: var(--font-display); font-size: 36px; margin-top: 12px;">
+      Full landing page structure.
+    </h2>
+
+    <!-- Hero -->
+    <div class="hero mt-48">
+      <div class="hero-grid">
+        <div>
+          <p class="label">Zero-Knowledge Compliance Infrastructure</p>
+          <h1 style="margin-top: 24px;">Compliant vaults for institutional capital.</h1>
+          <p class="mt-24">
+            A privacy-preserving vault protocol on Solana where zero-knowledge proofs replace
+            identity disclosure. Deposits, transfers, and withdrawals execute only when
+            cryptographic compliance is verified on-chain.
+          </p>
+          <div class="hero-ctas mt-32">
+            <button class="btn-primary">For Institutions &rarr;</button>
+            <button class="btn-ghost">For Investors &rarr;</button>
+          </div>
+        </div>
+        <div style="display: flex; align-items: start; justify-content: end;">
+          <div style="width: 100%; height: 320px; border-radius: 16px; border: 1px solid var(--border); background: linear-gradient(135deg, var(--bg-surface) 0%, var(--bg-primary) 100%); display: flex; align-items: center; justify-content: center;">
+            <span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-tertiary);">[ ZK circuit visualization ]</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Proof bar -->
+    <div class="proof-bar" style="margin: 0 -48px; border-radius: 0;">
+      <div style="display: flex; align-items: center; justify-content: center; gap: 48px; height: 56px; padding: 0 48px;">
+        <span style="font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-tertiary);">Built on Solana</span>
+        <span class="dot" style="color: var(--border);">·</span>
+        <span style="font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-tertiary);">Groth16 Verified</span>
+        <span class="dot" style="color: var(--border);">·</span>
+        <span style="font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-tertiary);">ZK Compliance</span>
+        <span class="dot" style="color: var(--border);">·</span>
+        <span style="font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-tertiary);">Institutional Grade</span>
+      </div>
+    </div>
+
+    <!-- Three bundles -->
+    <div class="mt-64">
+      <p class="label">What VaultProof Provides</p>
+      <h2 style="font-family: var(--font-display); font-size: 48px; margin-top: 12px; letter-spacing: -0.03em;">
+        Three layers of institutional trust.
+      </h2>
+
+      <div class="bundle-row mt-48">
+        <div>
+          <p class="label" style="color: var(--accent);">01 / Privacy Bundle</p>
+          <h3 class="mt-12">Confidential identity, visible rails.</h3>
+          <p class="mt-16">Zero-knowledge proofs verify KYC, accreditation, and jurisdiction without revealing investor identity on-chain. Travel Rule metadata is encrypted for authorized compliance review only.</p>
+        </div>
+        <div class="bundle-diagram">[ ZK proof flow diagram ]</div>
+      </div>
+
+      <div class="bundle-row">
+        <div>
+          <p class="label" style="color: var(--success);">02 / Compliance Bundle</p>
+          <h3 class="mt-12">On-chain audit trail.</h3>
+          <p class="mt-16">Every deposit, transfer, and withdrawal creates a TransferRecord. Source-of-funds demands flow through multisig-approved workflows. Compliance officers monitor the protocol without accessing private data.</p>
+        </div>
+        <div class="bundle-diagram">[ Compliance workflow diagram ]</div>
+      </div>
+
+      <div class="bundle-row">
+        <div>
+          <p class="label" style="color: var(--warning);">03 / Risk Bundle</p>
+          <h3 class="mt-12">Protocol-level controls.</h3>
+          <p class="mt-16">Risk oracle integration with staleness checks, per-address risk scoring, circuit breakers, velocity controls, and deposit concentration limits enforced at the program level.</p>
+        </div>
+        <div class="bundle-diagram">[ Risk oracle architecture ]</div>
+      </div>
+    </div>
+
+    <!-- Split CTA -->
+    <div class="mt-96" style="margin-top: 96px;">
+      <div class="split-cta">
+        <div class="split-panel dark">
+          <p class="label">For Institutions</p>
+          <h3>Operate a compliant vault.</h3>
+          <p>Deploy permissioned vaults with built-in ZK compliance, risk controls, and regulatory infrastructure. No identity data ever touches the chain.</p>
+          <div class="mt-16">
+            <button class="btn-primary">Launch Institution Console &rarr;</button>
+          </div>
+        </div>
+        <div class="split-panel mid">
+          <p class="label">For Investors</p>
+          <h3>Access institutional yield.</h3>
+          <p>Generate privacy-preserving credentials and participate in institutional vaults. Your compliance is proven cryptographically — your identity stays private.</p>
+          <div class="mt-16">
+            <button class="btn-ghost">Enter Investor Portal &rarr;</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     FOOTER
+     ══════════════════════════════════════════════════════════ -->
+<div class="preview-footer">
+  <div class="container">
+    <p>VaultProof Design System Preview — Instrument Serif + Geist + Zinc Scale + Blue Accent</p>
+  </div>
+</div>
+
+</body>
+</html>

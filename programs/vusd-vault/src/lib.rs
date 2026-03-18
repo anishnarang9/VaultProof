@@ -25,6 +25,8 @@ pub const DEFAULT_EXPIRED_THRESHOLD: u64 = 1_000_000_000;
 
 pub const DEFAULT_TIMELOCK: i64 = 259_200;
 pub const USDC_DECIMALS: u8 = 6;
+pub const DEFAULT_MAX_ORACLE_STALENESS: i64 = 86_400; // 24 hours
+pub const DEFAULT_RISK_THRESHOLD: u8 = 70; // 0-100 scale
 
 fn compute_proof_hash(proof_a: &[u8; 64], proof_b: &[u8; 128], proof_c: &[u8; 64]) -> [u8; 32] {
     hashv(&[proof_a.as_slice(), proof_b.as_slice(), proof_c.as_slice()]).to_bytes()
@@ -316,6 +318,35 @@ fn authorize_transfer_record_decryption(record: &mut TransferRecord) -> Result<(
     Ok(())
 }
 
+fn check_risk_oracle(oracle: &RiskOracle, clock_timestamp: i64) -> Result<()> {
+    require!(oracle.active, VaultError::RiskOracleInactive);
+    let staleness = clock_timestamp
+        .checked_sub(oracle.last_updated)
+        .ok_or(VaultError::Overflow)?;
+    require!(
+        staleness <= oracle.max_staleness,
+        VaultError::RiskOracleStale
+    );
+    Ok(())
+}
+
+fn check_address_risk(
+    oracle: &RiskOracle,
+    score: Option<&AddressRiskScore>,
+    clock_timestamp: i64,
+) -> Result<()> {
+    check_risk_oracle(oracle, clock_timestamp)?;
+    let effective_score = match score {
+        Some(s) => s.risk_score,
+        None => oracle.default_risk_score,
+    };
+    require!(
+        effective_score <= oracle.risk_threshold,
+        VaultError::RiskScoreExceeded
+    );
+    Ok(())
+}
+
 fn populate_transfer_record(
     record: &mut TransferRecord,
     transfer_type: TransferType,
@@ -324,6 +355,7 @@ fn populate_transfer_record(
     proof_hash: [u8; 32],
     encrypted_metadata: Vec<u8>,
     signer: Pubkey,
+    mandate_id: [u8; 32],
     bump: u8,
 ) -> Result<()> {
     record.proof_hash = proof_hash;
@@ -334,6 +366,7 @@ fn populate_transfer_record(
     record.encrypted_metadata = encrypted_metadata;
     record.decryption_authorized = false;
     record.signer = signer;
+    record.mandate_id = mandate_id;
     record.bump = bump;
     Ok(())
 }
@@ -402,8 +435,20 @@ pub mod vusd_vault {
         Ok(())
     }
 
-    pub fn deposit_with_proof(ctx: Context<DepositWithProof>, amount: u64) -> Result<()> {
+    pub fn deposit_with_proof(
+        ctx: Context<DepositWithProof>,
+        amount: u64,
+        mandate_id: [u8; 32],
+    ) -> Result<()> {
         let clock = Clock::get()?;
+
+        // KYT risk oracle check (strict mode)
+        check_address_risk(
+            &ctx.accounts.risk_oracle,
+            ctx.accounts.address_risk_score.as_deref().map(|v| &**v),
+            clock.unix_timestamp,
+        )?;
+
         {
             let vault_state = &mut ctx.accounts.vault_state;
             check_risk_controls(vault_state, amount, false, &clock)?;
@@ -479,6 +524,7 @@ pub mod vusd_vault {
             buffer.proof_hash,
             encrypted_metadata,
             ctx.accounts.user.key(),
+            mandate_id,
             ctx.bumps.transfer_record,
         )?;
 
@@ -492,8 +538,19 @@ pub mod vusd_vault {
         Ok(())
     }
 
-    pub fn transfer_with_proof(ctx: Context<TransferWithProof>, amount: u64) -> Result<()> {
+    pub fn transfer_with_proof(
+        ctx: Context<TransferWithProof>,
+        amount: u64,
+        mandate_id: [u8; 32],
+    ) -> Result<()> {
         let clock = Clock::get()?;
+
+        check_address_risk(
+            &ctx.accounts.risk_oracle,
+            ctx.accounts.address_risk_score.as_deref().map(|v| &**v),
+            clock.unix_timestamp,
+        )?;
+
         check_risk_controls(&mut ctx.accounts.vault_state, amount, false, &clock)?;
 
         let buffer = &ctx.accounts.proof_buffer;
@@ -535,6 +592,7 @@ pub mod vusd_vault {
             buffer.proof_hash,
             encrypted_metadata,
             ctx.accounts.sender.key(),
+            mandate_id,
             ctx.bumps.transfer_record,
         )?;
 
@@ -547,8 +605,19 @@ pub mod vusd_vault {
         Ok(())
     }
 
-    pub fn withdraw_with_proof(ctx: Context<WithdrawWithProof>, amount: u64) -> Result<()> {
+    pub fn withdraw_with_proof(
+        ctx: Context<WithdrawWithProof>,
+        amount: u64,
+        mandate_id: [u8; 32],
+    ) -> Result<()> {
         let clock = Clock::get()?;
+
+        check_address_risk(
+            &ctx.accounts.risk_oracle,
+            ctx.accounts.address_risk_score.as_deref().map(|v| &**v),
+            clock.unix_timestamp,
+        )?;
+
         check_risk_controls(&mut ctx.accounts.vault_state, amount, true, &clock)?;
 
         let buffer = &ctx.accounts.proof_buffer;
@@ -623,6 +692,7 @@ pub mod vusd_vault {
             buffer.proof_hash,
             encrypted_metadata,
             ctx.accounts.stealth_owner.key(),
+            mandate_id,
             ctx.bumps.transfer_record,
         )?;
 
@@ -831,6 +901,214 @@ pub mod vusd_vault {
     pub fn mark_decryption_authorized(ctx: Context<MarkDecryptionAuthorized>) -> Result<()> {
         authorize_transfer_record_decryption(&mut ctx.accounts.transfer_record)
     }
+
+    // ================================================================
+    // RISK ORACLE (KYT Control Plane)
+    // ================================================================
+
+    pub fn initialize_risk_oracle(
+        ctx: Context<InitRiskOracle>,
+        risk_authority: Pubkey,
+    ) -> Result<()> {
+        let oracle = &mut ctx.accounts.risk_oracle;
+        oracle.vault = ctx.accounts.vault_state.key();
+        oracle.risk_authority = risk_authority;
+        oracle.default_risk_score = 0;
+        oracle.risk_threshold = DEFAULT_RISK_THRESHOLD;
+        oracle.max_staleness = DEFAULT_MAX_ORACLE_STALENESS;
+        oracle.last_updated = Clock::get()?.unix_timestamp;
+        oracle.active = true;
+        oracle.bump = ctx.bumps.risk_oracle;
+
+        emit!(RiskOracleInitialized {
+            vault: oracle.vault,
+            risk_authority,
+            timestamp: oracle.last_updated,
+        });
+
+        Ok(())
+    }
+
+    pub fn update_risk_score(
+        ctx: Context<UpdateRiskScore>,
+        address: Pubkey,
+        risk_score: u8,
+    ) -> Result<()> {
+        require!(risk_score <= 100, VaultError::InvalidRiskScore);
+
+        let score_account = &mut ctx.accounts.address_risk_score;
+        let old_score = score_account.risk_score;
+        score_account.address = address;
+        score_account.risk_score = risk_score;
+        score_account.last_updated = Clock::get()?.unix_timestamp;
+        score_account.bump = ctx.bumps.address_risk_score;
+
+        let oracle = &mut ctx.accounts.risk_oracle;
+        oracle.last_updated = score_account.last_updated;
+
+        emit!(RiskScoreUpdated {
+            address,
+            old_score,
+            new_score: risk_score,
+            timestamp: score_account.last_updated,
+        });
+
+        Ok(())
+    }
+
+    pub fn update_risk_oracle_config(
+        ctx: Context<UpdateRiskOracleConfig>,
+        risk_threshold: u8,
+        max_staleness: i64,
+        default_risk_score: u8,
+    ) -> Result<()> {
+        require!(risk_threshold <= 100, VaultError::InvalidRiskScore);
+        require!(default_risk_score <= 100, VaultError::InvalidRiskScore);
+        require!(max_staleness > 0, VaultError::InvalidTimelock);
+
+        let oracle = &mut ctx.accounts.risk_oracle;
+        oracle.risk_threshold = risk_threshold;
+        oracle.max_staleness = max_staleness;
+        oracle.default_risk_score = default_risk_score;
+        Ok(())
+    }
+
+    // ================================================================
+    // CONFIDENTIAL TRANSFERS (Dual-Mint Architecture)
+    // ================================================================
+
+    pub fn setup_confidential_vault(
+        ctx: Context<SetupConfidentialVault>,
+        auditor_elgamal_pubkey: [u8; 32],
+    ) -> Result<()> {
+        let config = &mut ctx.accounts.confidential_config;
+        config.vault = ctx.accounts.vault_state.key();
+        config.confidential_share_mint = ctx.accounts.confidential_share_mint.key();
+        config.auditor_elgamal_pubkey = auditor_elgamal_pubkey;
+        config.total_confidential_shares = 0;
+        config.enabled = true;
+        config.bump = ctx.bumps.confidential_config;
+
+        emit!(ConfidentialMintInitialized {
+            vault: config.vault,
+            confidential_share_mint: config.confidential_share_mint,
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    pub fn convert_to_confidential(
+        ctx: Context<ConvertToConfidential>,
+        amount: u64,
+    ) -> Result<()> {
+        require!(amount > 0, VaultError::ZeroAmount);
+        require!(
+            ctx.accounts.confidential_config.enabled,
+            VaultError::ConfidentialTransfersDisabled
+        );
+
+        // Burn standard shares
+        let burn_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            Burn {
+                mint: ctx.accounts.share_mint.to_account_info(),
+                from: ctx.accounts.user_share_account.to_account_info(),
+                authority: ctx.accounts.user.to_account_info(),
+            },
+        );
+        token_interface::burn(burn_ctx, amount)?;
+
+        // Mint confidential shares
+        let vault_seeds = &[b"vault_state".as_ref(), &[ctx.accounts.vault_state.bump]];
+        let signer_seeds = &[&vault_seeds[..]];
+        let mint_ctx = CpiContext::new_with_signer(
+            ctx.accounts.confidential_token_program.to_account_info(),
+            MintTo {
+                mint: ctx.accounts.confidential_share_mint.to_account_info(),
+                to: ctx.accounts.user_confidential_account.to_account_info(),
+                authority: ctx.accounts.vault_state.to_account_info(),
+            },
+            signer_seeds,
+        );
+        token_interface::mint_to(mint_ctx, amount)?;
+
+        let config = &mut ctx.accounts.confidential_config;
+        config.total_confidential_shares = config
+            .total_confidential_shares
+            .checked_add(amount)
+            .ok_or(VaultError::Overflow)?;
+
+        let vault = &mut ctx.accounts.vault_state;
+        vault.total_shares = vault
+            .total_shares
+            .checked_sub(amount)
+            .ok_or(VaultError::Underflow)?;
+
+        emit!(SharesConvertedToConfidential {
+            user: ctx.accounts.user.key(),
+            amount,
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    pub fn convert_from_confidential(
+        ctx: Context<ConvertFromConfidential>,
+        amount: u64,
+    ) -> Result<()> {
+        require!(amount > 0, VaultError::ZeroAmount);
+        require!(
+            ctx.accounts.confidential_config.enabled,
+            VaultError::ConfidentialTransfersDisabled
+        );
+
+        // Burn confidential shares
+        let burn_ctx = CpiContext::new(
+            ctx.accounts.confidential_token_program.to_account_info(),
+            Burn {
+                mint: ctx.accounts.confidential_share_mint.to_account_info(),
+                from: ctx.accounts.user_confidential_account.to_account_info(),
+                authority: ctx.accounts.user.to_account_info(),
+            },
+        );
+        token_interface::burn(burn_ctx, amount)?;
+
+        // Mint standard shares
+        let vault_seeds = &[b"vault_state".as_ref(), &[ctx.accounts.vault_state.bump]];
+        let signer_seeds = &[&vault_seeds[..]];
+        let mint_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            MintTo {
+                mint: ctx.accounts.share_mint.to_account_info(),
+                to: ctx.accounts.user_share_account.to_account_info(),
+                authority: ctx.accounts.vault_state.to_account_info(),
+            },
+            signer_seeds,
+        );
+        token_interface::mint_to(mint_ctx, amount)?;
+
+        let config = &mut ctx.accounts.confidential_config;
+        config.total_confidential_shares = config
+            .total_confidential_shares
+            .checked_sub(amount)
+            .ok_or(VaultError::Underflow)?;
+
+        let vault = &mut ctx.accounts.vault_state;
+        vault.total_shares = vault
+            .total_shares
+            .checked_add(amount)
+            .ok_or(VaultError::Overflow)?;
+
+        emit!(SharesConvertedToStandard {
+            user: ctx.accounts.user.key(),
+            amount,
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug, InitSpace)]
@@ -932,6 +1210,41 @@ pub struct TransferRecord {
     pub encrypted_metadata: Vec<u8>,
     pub decryption_authorized: bool,
     pub signer: Pubkey,
+    pub mandate_id: [u8; 32],
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct ConfidentialVaultConfig {
+    pub vault: Pubkey,
+    pub confidential_share_mint: Pubkey,
+    pub auditor_elgamal_pubkey: [u8; 32],
+    pub total_confidential_shares: u64,
+    pub enabled: bool,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct RiskOracle {
+    pub vault: Pubkey,
+    pub risk_authority: Pubkey,
+    pub default_risk_score: u8,
+    pub risk_threshold: u8,
+    pub max_staleness: i64,
+    pub last_updated: i64,
+    pub active: bool,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct AddressRiskScore {
+    pub oracle: Pubkey,
+    pub address: Pubkey,
+    pub risk_score: u8,
+    pub last_updated: i64,
     pub bump: u8,
 }
 
@@ -1002,6 +1315,14 @@ pub struct DepositWithProof<'info> {
     pub kyc_registry: Box<Account<'info, kyc_registry::KycRegistry>>,
 
     #[account(
+        seeds = [b"risk_oracle", vault_state.key().as_ref()],
+        bump = risk_oracle.bump,
+    )]
+    pub risk_oracle: Box<Account<'info, RiskOracle>>,
+
+    pub address_risk_score: Option<Box<Account<'info, AddressRiskScore>>>,
+
+    #[account(
         mut,
         constraint = usdc_mint.key() == vault_state.usdc_mint @ VaultError::InvalidMint,
     )]
@@ -1070,6 +1391,14 @@ pub struct TransferWithProof<'info> {
     pub kyc_registry: Box<Account<'info, kyc_registry::KycRegistry>>,
 
     #[account(
+        seeds = [b"risk_oracle", vault_state.key().as_ref()],
+        bump = risk_oracle.bump,
+    )]
+    pub risk_oracle: Box<Account<'info, RiskOracle>>,
+
+    pub address_risk_score: Option<Box<Account<'info, AddressRiskScore>>>,
+
+    #[account(
         constraint = share_mint.key() == vault_state.share_mint @ VaultError::InvalidMint,
     )]
     pub share_mint: Box<InterfaceAccount<'info, Mint>>,
@@ -1121,6 +1450,14 @@ pub struct WithdrawWithProof<'info> {
     pub vault_state: Box<Account<'info, VaultState>>,
 
     pub kyc_registry: Box<Account<'info, kyc_registry::KycRegistry>>,
+
+    #[account(
+        seeds = [b"risk_oracle", vault_state.key().as_ref()],
+        bump = risk_oracle.bump,
+    )]
+    pub risk_oracle: Box<Account<'info, RiskOracle>>,
+
+    pub address_risk_score: Option<Box<Account<'info, AddressRiskScore>>>,
 
     #[account(
         constraint = usdc_mint.key() == vault_state.usdc_mint @ VaultError::InvalidMint,
@@ -1355,6 +1692,216 @@ pub struct MarkDecryptionAuthorized<'info> {
     pub authority: Signer<'info>,
 }
 
+// ================================================================
+// RISK ORACLE ACCOUNT CONTEXTS
+// ================================================================
+
+#[derive(Accounts)]
+pub struct InitRiskOracle<'info> {
+    #[account(
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+        has_one = authority @ VaultError::Unauthorized,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + RiskOracle::INIT_SPACE,
+        seeds = [b"risk_oracle", vault_state.key().as_ref()],
+        bump,
+    )]
+    pub risk_oracle: Account<'info, RiskOracle>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(address: Pubkey)]
+pub struct UpdateRiskScore<'info> {
+    #[account(
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        mut,
+        seeds = [b"risk_oracle", vault_state.key().as_ref()],
+        bump = risk_oracle.bump,
+        constraint = risk_oracle.risk_authority == risk_authority.key() @ VaultError::Unauthorized,
+    )]
+    pub risk_oracle: Account<'info, RiskOracle>,
+
+    #[account(
+        init_if_needed,
+        payer = risk_authority,
+        space = 8 + AddressRiskScore::INIT_SPACE,
+        seeds = [b"risk_score", risk_oracle.key().as_ref(), address.as_ref()],
+        bump,
+    )]
+    pub address_risk_score: Account<'info, AddressRiskScore>,
+
+    #[account(mut)]
+    pub risk_authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct UpdateRiskOracleConfig<'info> {
+    #[account(
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+        has_one = authority @ VaultError::Unauthorized,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        mut,
+        seeds = [b"risk_oracle", vault_state.key().as_ref()],
+        bump = risk_oracle.bump,
+    )]
+    pub risk_oracle: Account<'info, RiskOracle>,
+
+    pub authority: Signer<'info>,
+}
+
+// ================================================================
+// CONFIDENTIAL TRANSFER ACCOUNT CONTEXTS
+// ================================================================
+
+#[derive(Accounts)]
+pub struct SetupConfidentialVault<'info> {
+    #[account(
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+        has_one = authority @ VaultError::Unauthorized,
+    )]
+    pub vault_state: Account<'info, VaultState>,
+
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + ConfidentialVaultConfig::INIT_SPACE,
+        seeds = [b"confidential_config", vault_state.key().as_ref()],
+        bump,
+    )]
+    pub confidential_config: Account<'info, ConfidentialVaultConfig>,
+
+    /// The Token-2022 mint with ConfidentialTransfer extension, created externally.
+    /// Must have vault_state as mint authority.
+    #[account(
+        constraint = confidential_share_mint.key() != vault_state.share_mint @ VaultError::InvalidMint,
+    )]
+    pub confidential_share_mint: InterfaceAccount<'info, Mint>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ConvertToConfidential<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+    )]
+    pub vault_state: Box<Account<'info, VaultState>>,
+
+    #[account(
+        mut,
+        seeds = [b"confidential_config", vault_state.key().as_ref()],
+        bump = confidential_config.bump,
+    )]
+    pub confidential_config: Box<Account<'info, ConfidentialVaultConfig>>,
+
+    #[account(
+        mut,
+        constraint = share_mint.key() == vault_state.share_mint @ VaultError::InvalidMint,
+    )]
+    pub share_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        constraint = confidential_share_mint.key() == confidential_config.confidential_share_mint @ VaultError::InvalidMint,
+    )]
+    pub confidential_share_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        token::mint = share_mint,
+        token::authority = user,
+    )]
+    pub user_share_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint = confidential_share_mint,
+    )]
+    pub user_confidential_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    pub confidential_token_program: Interface<'info, TokenInterface>,
+}
+
+#[derive(Accounts)]
+pub struct ConvertFromConfidential<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault_state"],
+        bump = vault_state.bump,
+    )]
+    pub vault_state: Box<Account<'info, VaultState>>,
+
+    #[account(
+        mut,
+        seeds = [b"confidential_config", vault_state.key().as_ref()],
+        bump = confidential_config.bump,
+    )]
+    pub confidential_config: Box<Account<'info, ConfidentialVaultConfig>>,
+
+    #[account(
+        mut,
+        constraint = share_mint.key() == vault_state.share_mint @ VaultError::InvalidMint,
+    )]
+    pub share_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        constraint = confidential_share_mint.key() == confidential_config.confidential_share_mint @ VaultError::InvalidMint,
+    )]
+    pub confidential_share_mint: Box<InterfaceAccount<'info, Mint>>,
+
+    #[account(
+        mut,
+        token::mint = share_mint,
+    )]
+    pub user_share_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
+        mut,
+        token::mint = confidential_share_mint,
+        token::authority = user,
+    )]
+    pub user_confidential_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    pub token_program: Interface<'info, TokenInterface>,
+    pub confidential_token_program: Interface<'info, TokenInterface>,
+}
+
 #[event]
 pub struct DepositVerified {
     pub amount: u64,
@@ -1418,6 +1965,42 @@ pub struct YieldAccrued {
     pub timestamp: i64,
 }
 
+#[event]
+pub struct RiskOracleInitialized {
+    pub vault: Pubkey,
+    pub risk_authority: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct RiskScoreUpdated {
+    pub address: Pubkey,
+    pub old_score: u8,
+    pub new_score: u8,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct ConfidentialMintInitialized {
+    pub vault: Pubkey,
+    pub confidential_share_mint: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct SharesConvertedToConfidential {
+    pub user: Pubkey,
+    pub amount: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct SharesConvertedToStandard {
+    pub user: Pubkey,
+    pub amount: u64,
+    pub timestamp: i64,
+}
+
 #[error_code]
 pub enum VaultError {
     #[msg("Invalid proof format.")]
@@ -1476,6 +2059,16 @@ pub enum VaultError {
     ZeroAmount,
     #[msg("Zero shares are not allowed.")]
     ZeroShares,
+    #[msg("Risk oracle is not active.")]
+    RiskOracleInactive,
+    #[msg("Risk oracle data is stale.")]
+    RiskOracleStale,
+    #[msg("Address risk score exceeds threshold.")]
+    RiskScoreExceeded,
+    #[msg("Invalid risk score (must be 0-100).")]
+    InvalidRiskScore,
+    #[msg("Confidential transfers are not enabled for this vault.")]
+    ConfidentialTransfersDisabled,
 }
 
 #[cfg(test)]
@@ -1805,6 +2398,7 @@ mod tests {
             encrypted_metadata: encrypted_metadata.clone(),
             decryption_authorized: false,
             signer: Pubkey::new_unique(),
+            mandate_id: [0u8; 32],
             bump: 1,
         };
 
@@ -1822,6 +2416,7 @@ mod tests {
             encrypted_metadata: vec![43u8; TEST_METADATA_LEN],
             decryption_authorized: false,
             signer: Pubkey::new_unique(),
+            mandate_id: [0u8; 32],
             bump: 1,
         };
 
@@ -2070,5 +2665,97 @@ mod tests {
 
         assert_eq!(total_assets, 11_025);
         assert_eq!(total_shares, 10_500);
+    }
+
+    fn sample_risk_oracle(last_updated: i64) -> RiskOracle {
+        RiskOracle {
+            vault: Pubkey::new_unique(),
+            risk_authority: Pubkey::new_unique(),
+            default_risk_score: 0,
+            risk_threshold: DEFAULT_RISK_THRESHOLD,
+            max_staleness: DEFAULT_MAX_ORACLE_STALENESS,
+            last_updated,
+            active: true,
+            bump: 1,
+        }
+    }
+
+    #[test]
+    fn risk_oracle_accepts_fresh_oracle_with_low_default() {
+        let oracle = sample_risk_oracle(1_763_077_200);
+        check_address_risk(&oracle, None, 1_763_077_200 + 100).unwrap();
+    }
+
+    #[test]
+    fn risk_oracle_rejects_stale_oracle() {
+        let oracle = sample_risk_oracle(1_763_000_000);
+        let err = check_address_risk(
+            &oracle,
+            None,
+            1_763_000_000 + DEFAULT_MAX_ORACLE_STALENESS + 1,
+        )
+        .unwrap_err();
+        assert_error_name(err, "RiskOracleStale");
+    }
+
+    #[test]
+    fn risk_oracle_rejects_inactive() {
+        let mut oracle = sample_risk_oracle(1_763_077_200);
+        oracle.active = false;
+        let err = check_address_risk(&oracle, None, 1_763_077_200 + 100).unwrap_err();
+        assert_error_name(err, "RiskOracleInactive");
+    }
+
+    #[test]
+    fn risk_oracle_uses_address_score_when_present() {
+        let oracle = sample_risk_oracle(1_763_077_200);
+        let score = AddressRiskScore {
+            oracle: oracle.vault,
+            address: Pubkey::new_unique(),
+            risk_score: 90,
+            last_updated: 1_763_077_200,
+            bump: 1,
+        };
+        let err = check_address_risk(&oracle, Some(&score), 1_763_077_200 + 100).unwrap_err();
+        assert_error_name(err, "RiskScoreExceeded");
+    }
+
+    #[test]
+    fn risk_oracle_passes_address_score_below_threshold() {
+        let oracle = sample_risk_oracle(1_763_077_200);
+        let score = AddressRiskScore {
+            oracle: oracle.vault,
+            address: Pubkey::new_unique(),
+            risk_score: 50,
+            last_updated: 1_763_077_200,
+            bump: 1,
+        };
+        check_address_risk(&oracle, Some(&score), 1_763_077_200 + 100).unwrap();
+    }
+
+    #[test]
+    fn risk_oracle_default_score_can_exceed_threshold() {
+        let mut oracle = sample_risk_oracle(1_763_077_200);
+        oracle.default_risk_score = 80;
+        let err = check_address_risk(&oracle, None, 1_763_077_200 + 100).unwrap_err();
+        assert_error_name(err, "RiskScoreExceeded");
+    }
+
+    #[test]
+    fn mandate_id_preserved_in_transfer_record() {
+        let mandate = [42u8; 32];
+        let record = TransferRecord {
+            proof_hash: [1u8; 32],
+            transfer_type: TransferType::Deposit,
+            amount: 1_000_000,
+            timestamp: 1_763_077_200,
+            merkle_root_snapshot: [2u8; 32],
+            encrypted_metadata: vec![0u8; TEST_METADATA_LEN],
+            decryption_authorized: false,
+            signer: Pubkey::new_unique(),
+            mandate_id: mandate,
+            bump: 1,
+        };
+        assert_eq!(record.mandate_id, mandate);
     }
 }

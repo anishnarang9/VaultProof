@@ -24,7 +24,7 @@ export default function InvestorLayout() {
           <NavLink to="/">
             <BrandMark />
           </NavLink>
-          <p className="mt-4 text-[11px] uppercase tracking-[0.24em] text-text-tertiary">
+          <p className="mt-4 font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-text-tertiary">
             Investor Portal
           </p>
         </div>
@@ -37,7 +37,7 @@ export default function InvestorLayout() {
                 key={item.to}
                 className={({ isActive }) =>
                   cn(
-                    'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors',
+                    'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors duration-150',
                     isActive
                       ? 'bg-elevated text-text-primary'
                       : 'text-text-secondary hover:bg-elevated/60 hover:text-text-primary',
