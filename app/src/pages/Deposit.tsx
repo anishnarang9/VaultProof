@@ -1,6 +1,6 @@
 import { BN } from '@coral-xyz/anchor';
 import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import ProofGenerationModal from '../components/proof/ProofGenerationModal';
 import {
   Alert,
@@ -13,19 +13,132 @@ import {
   CardTitle,
   Input,
   Label,
+  Select,
 } from '../components/ui/primitives';
 import { useToast } from '../components/ui/primitives';
 import { useCredential } from '../hooks/useCredential';
 import { useProofGeneration } from '../hooks/useProofGeneration';
 import { useVaultState } from '../hooks/useVaultState';
+import { bigintToHex, randomFieldElement, textToField } from '../lib/crypto';
 import { formatCurrency } from '../lib/format';
 import { buildDepositTx, getPrograms, proofToOnchainFormat } from '../lib/program';
-import type { StoredCredential } from '../lib/types';
+import type { AccreditationTier, StoredCredential } from '../lib/types';
 
-async function readCredentialFile(file: File): Promise<StoredCredential> {
-  const text = await file.text();
-  return JSON.parse(text) as StoredCredential;
+// ---------------------------------------------------------------------------
+// Country → identity document mapping
+// ---------------------------------------------------------------------------
+
+interface CountryConfig {
+  label: string;
+  code: string;
+  region: 'US' | 'UK' | 'EU' | 'OTHER';
+  idLabel: string;
+  idPlaceholder: string;
+  idMaxLength?: number;
+  idPattern?: RegExp;
 }
+
+const COUNTRIES: CountryConfig[] = [
+  { label: 'United States', code: 'US', region: 'US', idLabel: 'Last 4 digits of SSN', idPlaceholder: '1234', idMaxLength: 4, idPattern: /^\d{4}$/ },
+  { label: 'United Kingdom', code: 'GB', region: 'UK', idLabel: 'National Insurance Number', idPlaceholder: 'QQ 12 34 56 A', idMaxLength: 13 },
+  { label: 'Germany', code: 'DE', region: 'EU', idLabel: 'National ID Number (Personalausweisnummer)', idPlaceholder: 'T220001293', idMaxLength: 10 },
+  { label: 'France', code: 'FR', region: 'EU', idLabel: 'National ID Number (CNI)', idPlaceholder: '123456789012', idMaxLength: 12 },
+  { label: 'Switzerland', code: 'CH', region: 'EU', idLabel: 'National ID Number', idPlaceholder: 'C1234567', idMaxLength: 12 },
+  { label: 'Canada', code: 'CA', region: 'OTHER', idLabel: 'Social Insurance Number (last 3)', idPlaceholder: '123', idMaxLength: 3, idPattern: /^\d{3}$/ },
+  { label: 'Singapore', code: 'SG', region: 'OTHER', idLabel: 'NRIC / FIN Number', idPlaceholder: 'S1234567D', idMaxLength: 9 },
+  { label: 'Hong Kong', code: 'HK', region: 'OTHER', idLabel: 'HKID Number', idPlaceholder: 'A123456(7)', idMaxLength: 10 },
+  { label: 'Japan', code: 'JP', region: 'OTHER', idLabel: 'My Number (last 4)', idPlaceholder: '1234', idMaxLength: 4, idPattern: /^\d{4}$/ },
+  { label: 'United Arab Emirates', code: 'AE', region: 'OTHER', idLabel: 'Emirates ID Number', idPlaceholder: '784-1234-1234567-1', idMaxLength: 18 },
+  { label: 'Brazil', code: 'BR', region: 'OTHER', idLabel: 'CPF Number', idPlaceholder: '123.456.789-00', idMaxLength: 14 },
+  { label: 'Other', code: 'XX', region: 'OTHER', idLabel: 'Passport Number', idPlaceholder: 'AB1234567', idMaxLength: 20 },
+];
+
+// ---------------------------------------------------------------------------
+// Wizard step definitions
+// ---------------------------------------------------------------------------
+
+type StepId =
+  | 'fullName'
+  | 'dateOfBirth'
+  | 'country'
+  | 'identityNumber'
+  | 'documentUpload'
+  | 'accreditation'
+  | 'sourceOfFunds'
+  | 'amount'
+  | 'review'
+  | 'proofSubmit';
+
+const STEP_ORDER: StepId[] = [
+  'fullName',
+  'dateOfBirth',
+  'country',
+  'identityNumber',
+  'documentUpload',
+  'accreditation',
+  'sourceOfFunds',
+  'amount',
+  'review',
+  'proofSubmit',
+];
+
+const STEP_TITLES: Record<StepId, string> = {
+  fullName: 'Full Legal Name',
+  dateOfBirth: 'Date of Birth',
+  country: 'Country of Residence',
+  identityNumber: 'Identity Verification',
+  documentUpload: 'Document Upload',
+  accreditation: 'Investor Accreditation',
+  sourceOfFunds: 'Source of Funds',
+  amount: 'Deposit Amount',
+  review: 'Review & Confirm',
+  proofSubmit: 'Generate Proof & Submit',
+};
+
+// ---------------------------------------------------------------------------
+// Form state
+// ---------------------------------------------------------------------------
+
+interface DepositFormState {
+  fullName: string;
+  dateOfBirth: string;
+  countryCode: string;
+  identityNumber: string;
+  documentFile: File | null;
+  documentPreview: string | null;
+  accreditation: AccreditationTier;
+  sourceOfFunds: string;
+  amount: string;
+}
+
+const INITIAL_FORM: DepositFormState = {
+  fullName: '',
+  dateOfBirth: '',
+  countryCode: '',
+  identityNumber: '',
+  documentFile: null,
+  documentPreview: null,
+  accreditation: 'accredited',
+  sourceOfFunds: '',
+  amount: '',
+};
+
+// ---------------------------------------------------------------------------
+// Poseidon identity hash
+// ---------------------------------------------------------------------------
+
+async function hashIdentity(countryCode: string, idNumber: string): Promise<string> {
+  const { buildPoseidon } = await import('circomlibjs');
+  const poseidon = await buildPoseidon();
+  const countryField = textToField(countryCode);
+  const idField = textToField(idNumber);
+  const hash = poseidon([countryField, idField]);
+  return bigintToHex(BigInt(poseidon.F.toString(hash)));
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export default function Deposit() {
   const { toast } = useToast();
@@ -34,63 +147,148 @@ export default function Deposit() {
   const { connection } = useConnection();
   const anchorWallet = useAnchorWallet();
   const { publicKey, sendTransaction } = useWallet();
-  const [amount, setAmount] = useState('');
-  const [modalOpen, setModalOpen] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
   const proofGeneration = useProofGeneration();
 
-  const numericAmount = useMemo(() => BigInt(Math.round(Number(amount || '0'))), [amount]);
+  const [step, setStep] = useState(0);
+  const [form, setForm] = useState<DepositFormState>(INITIAL_FORM);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  const currentStepId = STEP_ORDER[step];
+  const totalSteps = STEP_ORDER.length;
 
-    if (!file) {
-      return;
+  const countryConfig = useMemo(
+    () => COUNTRIES.find((c) => c.code === form.countryCode) ?? COUNTRIES[COUNTRIES.length - 1],
+    [form.countryCode],
+  );
+
+  const numericAmount = useMemo(
+    () => BigInt(Math.round(Number(form.amount || '0'))),
+    [form.amount],
+  );
+
+  const update = useCallback(
+    <K extends keyof DepositFormState>(key: K, value: DepositFormState[K]) => {
+      setForm((prev) => ({ ...prev, [key]: value }));
+    },
+    [],
+  );
+
+  // Clear identity number when country changes
+  const setCountry = useCallback((code: string) => {
+    setForm((prev) => ({ ...prev, countryCode: code, identityNumber: '' }));
+  }, []);
+
+  // Validation per step
+  const canAdvance = useMemo(() => {
+    switch (currentStepId) {
+      case 'fullName':
+        return form.fullName.trim().length >= 2;
+      case 'dateOfBirth':
+        return form.dateOfBirth.length > 0;
+      case 'country':
+        return form.countryCode.length > 0;
+      case 'identityNumber': {
+        const val = form.identityNumber.trim();
+        if (!val) return false;
+        if (countryConfig.idPattern) return countryConfig.idPattern.test(val);
+        return val.length >= 2;
+      }
+      case 'documentUpload':
+        return true; // optional step
+      case 'accreditation':
+        return !!form.accreditation;
+      case 'sourceOfFunds':
+        return form.sourceOfFunds.trim().length >= 3;
+      case 'amount':
+        return numericAmount > 0n;
+      case 'review':
+        return true;
+      case 'proofSubmit':
+        return true;
+      default:
+        return false;
     }
+  }, [currentStepId, form, countryConfig, numericAmount]);
 
-    try {
-      const nextCredential = await readCredentialFile(file);
-      saveCredential(nextCredential);
-      toast({
-        description: file.name,
-        title: 'Credential file loaded',
-        variant: 'success',
-      });
-    } catch (caughtError) {
-      setStatus(
-        caughtError instanceof Error ? caughtError.message : 'Unable to load credential file.',
-      );
-    }
+  const goNext = () => {
+    if (step < totalSteps - 1) setStep(step + 1);
+  };
+  const goBack = () => {
+    if (step > 0) setStep(step - 1);
+  };
+  const goToStep = (target: number) => {
+    if (target < step) setStep(target);
   };
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  // Document upload
+  const handleDocUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    update('documentFile', file);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      update('documentPreview', e.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+    toast({ title: 'Document uploaded', description: file.name, variant: 'success' });
+  };
+
+  // Build credential and submit proof
+  const handleProofAndSubmit = async () => {
     setModalOpen(true);
     setStatus(null);
-
-    if (!credential) {
-      setStatus('Load a credential file or use the staged local credential before depositing.');
-      return;
-    }
+    setSubmitting(true);
 
     if (!anchorWallet || !publicKey || !sendTransaction) {
       setStatus('Connect a wallet before submitting a deposit transaction.');
-      return;
-    }
-
-    const proofResult = await proofGeneration.generate({
-      amount: numericAmount,
-      credential,
-      recipient: 'vault_reserve',
-      thresholds: vault.thresholds,
-      regulatorPubkey: vault.regulatorKey,
-    });
-
-    if (!proofResult) {
+      setSubmitting(false);
       return;
     }
 
     try {
+      // Hash identity number into identitySecret
+      const identitySecret = await hashIdentity(form.countryCode, form.identityNumber);
+      const sourceOfFundsHash = bigintToHex(textToField(form.sourceOfFunds));
+
+      // Build credential from wizard form data
+      const builtCredential: StoredCredential = {
+        fullName: form.fullName.trim(),
+        dateOfBirth: form.dateOfBirth,
+        wallet: publicKey.toBase58(),
+        jurisdiction: countryConfig.label,
+        countryCode: form.countryCode,
+        accreditation: form.accreditation,
+        issuedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        leafHash: '',
+        identitySecret,
+        sourceOfFundsHash,
+        credentialVersion: 1,
+        sourceOfFundsReference: form.sourceOfFunds,
+      };
+
+      // If we already have a credential stored (e.g. from institution issuance), prefer it
+      // Otherwise save the one we just built
+      const activeCredential = credential ?? builtCredential;
+      if (!credential) {
+        saveCredential(builtCredential);
+      }
+
+      const proofResult = await proofGeneration.generate({
+        amount: numericAmount,
+        credential: activeCredential,
+        recipient: 'vault_reserve',
+        thresholds: vault.thresholds,
+        regulatorPubkey: vault.regulatorKey,
+      });
+
+      if (!proofResult) {
+        setSubmitting(false);
+        return;
+      }
+
       const { vusdVault } = getPrograms(connection, anchorWallet);
       const { proofA, proofB, proofC, publicInputs } = proofToOnchainFormat(
         proofResult.proof,
@@ -117,101 +315,383 @@ export default function Deposit() {
       setStatus(`Deposit submitted: ${signature}`);
     } catch (caughtError) {
       setStatus(caughtError instanceof Error ? caughtError.message : 'Unable to submit deposit.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1.05fr)_360px]">
-      <Card>
-        <CardHeader>
-          <Badge variant="secondary">Deposit</Badge>
-          <CardTitle className="mt-3">Deposit USDC with proof</CardTitle>
-          <CardDescription>
-            Generate a Groth16 proof with credential version and source-of-funds hash in the witness,
-            then submit the deposit transaction to mint vault shares.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="grid gap-5" onSubmit={handleSubmit}>
+  // ---------------------------------------------------------------------------
+  // Step renderers
+  // ---------------------------------------------------------------------------
+
+  function renderStepContent() {
+    switch (currentStepId) {
+      case 'fullName':
+        return (
+          <div className="grid gap-2">
+            <Label htmlFor="fullName">Full Legal Name</Label>
+            <Input
+              id="fullName"
+              placeholder="As it appears on your government-issued ID"
+              value={form.fullName}
+              onChange={(e) => update('fullName', e.target.value)}
+              autoFocus
+            />
+            <p className="text-xs text-text-tertiary">
+              Must match the name on your identity document exactly.
+            </p>
+          </div>
+        );
+
+      case 'dateOfBirth':
+        return (
+          <div className="grid gap-2">
+            <Label htmlFor="dob">Date of Birth</Label>
+            <Input
+              id="dob"
+              type="date"
+              value={form.dateOfBirth}
+              onChange={(e) => update('dateOfBirth', e.target.value)}
+              autoFocus
+            />
+          </div>
+        );
+
+      case 'country':
+        return (
+          <div className="grid gap-2">
+            <Label htmlFor="country">Country of Residence</Label>
+            <Select
+              id="country"
+              value={form.countryCode}
+              onChange={(e) => setCountry(e.target.value)}
+            >
+              <option value="">Select your country</option>
+              {COUNTRIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
+            {form.countryCode && (
+              <p className="text-xs text-text-tertiary">
+                {countryConfig.region === 'EU'
+                  ? 'Regulated under MiCA (Markets in Crypto-Assets Regulation).'
+                  : countryConfig.region === 'US'
+                    ? 'Regulated under U.S. securities law (SEC / FinCEN).'
+                    : countryConfig.region === 'UK'
+                      ? 'Regulated under UK FCA guidelines.'
+                      : 'International compliance standards apply.'}
+              </p>
+            )}
+          </div>
+        );
+
+      case 'identityNumber':
+        return (
+          <div className="grid gap-2">
+            <Label htmlFor="idNumber">{countryConfig.idLabel}</Label>
+            <Input
+              id="idNumber"
+              placeholder={countryConfig.idPlaceholder}
+              maxLength={countryConfig.idMaxLength}
+              value={form.identityNumber}
+              onChange={(e) => update('identityNumber', e.target.value)}
+              autoFocus
+            />
+            <p className="text-xs text-text-tertiary">
+              This value is hashed locally using Poseidon and never leaves your browser.
+              Only the cryptographic hash is included in the ZK proof.
+            </p>
+          </div>
+        );
+
+      case 'documentUpload':
+        return (
+          <div className="grid gap-4">
             <div className="grid gap-2">
-              <Label htmlFor="amount">Amount (USDC)</Label>
+              <Label htmlFor="docUpload">Upload Identity Document</Label>
+              <Input
+                id="docUpload"
+                type="file"
+                accept="image/*,.pdf"
+                onChange={handleDocUpload}
+              />
+              <p className="text-xs text-text-tertiary">
+                Accepted: passport, national ID, or driver's license. JPG, PNG, or PDF.
+              </p>
+            </div>
+            {form.documentPreview && (
+              <div className="rounded-[var(--radius)] border border-border overflow-hidden">
+                <img
+                  src={form.documentPreview}
+                  alt="Document preview"
+                  className="max-h-48 w-full object-contain bg-bg-primary"
+                />
+              </div>
+            )}
+            {form.documentFile && (
+              <div className="flex items-center gap-2">
+                <Badge variant="success">Uploaded</Badge>
+                <span className="text-sm text-text-secondary">{form.documentFile.name}</span>
+              </div>
+            )}
+            <Alert
+              title="AI verification coming soon"
+              description="Document verification via AI-powered OCR is under development. Your upload is saved locally for this session but will not be processed automatically yet."
+              variant="default"
+            />
+          </div>
+        );
+
+      case 'accreditation':
+        return (
+          <div className="grid gap-2">
+            <Label htmlFor="accreditation">Investor Accreditation Tier</Label>
+            <Select
+              id="accreditation"
+              value={form.accreditation}
+              onChange={(e) => update('accreditation', e.target.value as AccreditationTier)}
+            >
+              <option value="retail">Retail Investor</option>
+              <option value="accredited">Accredited Investor</option>
+              <option value="institutional">Institutional Investor</option>
+            </Select>
+            <div className="mt-2 grid gap-2 text-xs text-text-tertiary">
+              <p>
+                <span className="font-medium text-text-secondary">Retail:</span> Deposit up to{' '}
+                {formatCurrency(vault.thresholds.retail)}
+              </p>
+              <p>
+                <span className="font-medium text-text-secondary">Accredited:</span> Deposit up to{' '}
+                {formatCurrency(vault.thresholds.accredited)}
+              </p>
+              <p>
+                <span className="font-medium text-text-secondary">Institutional:</span> Deposit up to{' '}
+                {formatCurrency(vault.thresholds.institutional)}
+              </p>
+            </div>
+          </div>
+        );
+
+      case 'sourceOfFunds':
+        return (
+          <div className="grid gap-2">
+            <Label htmlFor="sourceOfFunds">Source of Funds Reference</Label>
+            <Input
+              id="sourceOfFunds"
+              placeholder="e.g., Wire transfer from UBS, verified 2026-03-01"
+              value={form.sourceOfFunds}
+              onChange={(e) => update('sourceOfFunds', e.target.value)}
+              autoFocus
+            />
+            <p className="text-xs text-text-tertiary">
+              Describe the origin of the funds you are depositing. This is hashed into your
+              compliance proof for Travel Rule compliance.
+            </p>
+          </div>
+        );
+
+      case 'amount':
+        return (
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="amount">Deposit Amount (USDC)</Label>
               <Input
                 id="amount"
                 inputMode="decimal"
-                onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
-                value={amount}
+                placeholder="10,000"
+                value={form.amount}
+                onChange={(e) => update('amount', e.target.value.replace(/[^\d.]/g, ''))}
+                autoFocus
               />
             </div>
-
-            <div className="grid gap-5 md:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor="credentialUpload">Credential File</Label>
-                <Input id="credentialUpload" onChange={handleUpload} type="file" />
-              </div>
-              <div className="grid gap-2">
-                <Label>Loaded Credential</Label>
-                <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-3 text-sm text-text-secondary">
-                  {credential ? credential.fullName : 'Using local storage if available'}
-                </div>
-              </div>
-            </div>
-
             <div className="grid gap-3 md:grid-cols-3">
               <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4">
-                <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">Share Price</p>
+                <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">
+                  Share Price
+                </p>
                 <p className="mt-2 text-sm text-text-primary">
                   {vault.sharePrice > 0 ? `$${vault.sharePrice.toFixed(3)}` : 'Awaiting first mint'}
                 </p>
               </div>
               <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4">
-                <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">Retail Threshold</p>
-                <p className="mt-2 text-sm text-text-primary">{formatCurrency(vault.thresholds.retail)}</p>
+                <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">
+                  Tier Limit
+                </p>
+                <p className="mt-2 text-sm text-text-primary">
+                  {formatCurrency(vault.thresholds[form.accreditation] ?? vault.thresholds.retail)}
+                </p>
               </div>
               <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4">
-                <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">Accredited Threshold</p>
-                <p className="mt-2 text-sm text-text-primary">{formatCurrency(vault.thresholds.accredited)}</p>
+                <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">
+                  Est. Shares
+                </p>
+                <p className="mt-2 text-sm text-text-primary">
+                  {vault.sharePrice > 0 && numericAmount > 0n
+                    ? (Number(numericAmount) / vault.sharePrice).toLocaleString(undefined, {
+                        maximumFractionDigits: 2,
+                      })
+                    : '—'}
+                </p>
               </div>
             </div>
+          </div>
+        );
 
-            {status ? (
+      case 'review':
+        return (
+          <div className="grid gap-4">
+            {[
+              { label: 'Full Name', value: form.fullName, editStep: 0 },
+              { label: 'Date of Birth', value: form.dateOfBirth, editStep: 1 },
+              { label: 'Country', value: countryConfig.label, editStep: 2 },
+              { label: countryConfig.idLabel, value: form.countryCode === 'US' ? `****${form.identityNumber}` : form.identityNumber, editStep: 3 },
+              { label: 'Document', value: form.documentFile ? form.documentFile.name : 'Not uploaded', editStep: 4 },
+              { label: 'Accreditation', value: form.accreditation.charAt(0).toUpperCase() + form.accreditation.slice(1), editStep: 5 },
+              { label: 'Source of Funds', value: form.sourceOfFunds, editStep: 6 },
+              { label: 'Deposit Amount', value: `${Number(form.amount).toLocaleString()} USDC`, editStep: 7 },
+            ].map((row) => (
+              <div
+                key={row.label}
+                className="flex items-center justify-between rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-3"
+              >
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">
+                    {row.label}
+                  </p>
+                  <p className="mt-1 text-sm text-text-primary">{row.value}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => goToStep(row.editStep)}
+                  className="text-xs text-accent hover:underline"
+                >
+                  Edit
+                </button>
+              </div>
+            ))}
+            {vault.sharePrice > 0 && numericAmount > 0n && (
+              <div className="rounded-[var(--radius)] border border-accent/20 bg-accent/5 px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">
+                  Estimated Shares to Receive
+                </p>
+                <p className="mt-1 text-lg font-medium text-text-primary">
+                  {(Number(numericAmount) / vault.sharePrice).toLocaleString(undefined, {
+                    maximumFractionDigits: 2,
+                  })}{' '}
+                  shares
+                </p>
+              </div>
+            )}
+          </div>
+        );
+
+      case 'proofSubmit':
+        return (
+          <div className="grid gap-4">
+            <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4">
+              <p className="text-sm text-text-secondary">
+                Clicking below will generate a Groth16 zero-knowledge proof in your browser. Your
+                identity number is hashed locally — only the cryptographic proof is submitted
+                on-chain.
+              </p>
+            </div>
+            {[
+              'Hash identity with Poseidon and build credential witness.',
+              'Fetch current registry root and vault thresholds from Solana.',
+              'Generate the Groth16 proof and encrypt Travel Rule metadata.',
+              'Submit deposit_with_proof and confirm the share mint.',
+            ].map((desc, index) => (
+              <div
+                key={desc}
+                className="flex gap-3 rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4"
+              >
+                <span className="font-mono text-xs text-text-tertiary">0{index + 1}</span>
+                <p className="text-sm leading-6 text-text-secondary">{desc}</p>
+              </div>
+            ))}
+            {status && (
               <Alert
                 description={status}
                 title={status.toLowerCase().includes('unable') ? 'Deposit failed' : 'Deposit status'}
-                variant={status.toLowerCase().includes('unable') ? 'destructive' : 'default'}
+                variant={status.toLowerCase().includes('unable') ? 'destructive' : 'success'}
               />
-            ) : null}
+            )}
+          </div>
+        );
 
-            <Button disabled={!credential || !amount || !publicKey} type="submit">
-              Generate Proof and Deposit
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      default:
+        return null;
+    }
+  }
 
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+
+  return (
+    <div className="mx-auto max-w-2xl">
       <Card>
         <CardHeader>
-          <Badge variant="outline">Proof Flow</Badge>
-          <CardTitle className="mt-3">Execution path</CardTitle>
+          <div className="flex items-center justify-between">
+            <Badge variant="secondary">Deposit</Badge>
+            <span className="text-xs text-text-tertiary">
+              Step {step + 1} of {totalSteps}
+            </span>
+          </div>
+          <CardTitle className="mt-3">{STEP_TITLES[currentStepId]}</CardTitle>
           <CardDescription>
-            A restrained progress modal tracks proof generation with context reads, witness
-            assembly, metadata encryption, and transaction submission.
+            {currentStepId === 'review'
+              ? 'Review your information before generating the compliance proof.'
+              : currentStepId === 'proofSubmit'
+                ? 'Generate a zero-knowledge proof and submit your deposit on-chain.'
+                : 'Complete each step to build your compliance credential and deposit.'}
           </CardDescription>
+
+          {/* Progress bar */}
+          <div className="mt-4 flex gap-1">
+            {STEP_ORDER.map((_, index) => (
+              <div
+                key={index}
+                className={`h-1 flex-1 rounded-full transition-colors ${
+                  index < step
+                    ? 'bg-success'
+                    : index === step
+                      ? 'bg-accent'
+                      : 'bg-border'
+                }`}
+              />
+            ))}
+          </div>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {[
-            'Fetch the current registry root and vault thresholds from Solana.',
-            'Build the witness with credential version and source-of-funds hash.',
-            'Generate the proof and encrypted Travel Rule metadata in-browser.',
-            'Submit deposit_with_proof and confirm the share mint.',
-          ].map((step, index) => (
-            <div
-              key={step}
-              className="flex gap-3 rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4"
+
+        <CardContent>
+          <div className="min-h-[200px]">{renderStepContent()}</div>
+
+          {/* Navigation */}
+          <div className="mt-6 flex items-center justify-between">
+            <Button
+              variant="ghost"
+              onClick={goBack}
+              disabled={step === 0}
             >
-              <span className="font-mono text-xs text-text-tertiary">0{index + 1}</span>
-              <p className="text-sm leading-6 text-text-secondary">{step}</p>
-            </div>
-          ))}
+              Back
+            </Button>
+
+            {currentStepId === 'proofSubmit' ? (
+              <Button
+                onClick={handleProofAndSubmit}
+                disabled={!publicKey || submitting || numericAmount === 0n}
+              >
+                {submitting ? 'Generating...' : 'Generate Proof & Deposit'}
+              </Button>
+            ) : (
+              <Button onClick={goNext} disabled={!canAdvance}>
+                {currentStepId === 'review' ? 'Proceed to Proof' : 'Continue'}
+              </Button>
+            )}
+          </div>
         </CardContent>
       </Card>
 
