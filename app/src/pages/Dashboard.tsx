@@ -102,32 +102,32 @@ export default function Dashboard() {
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={sharePriceHistory}>
                 <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                <XAxis dataKey="label" stroke="#52535A" tickLine={false} axisLine={false} />
+                <XAxis dataKey="label" stroke="#71717A" tickLine={false} axisLine={false} />
                 <YAxis
-                  stroke="#52535A"
+                  stroke="#71717A"
                   tickFormatter={(value) => `$${Number(value).toFixed(2)}`}
                   tickLine={false}
                   axisLine={false}
                 />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: '#12131A',
-                    border: '1px solid #1E2028',
+                    backgroundColor: '#18181B',
+                    border: '1px solid #27272A',
                     borderRadius: 12,
                   }}
                   formatter={(value) => [`$${Number(value ?? 0).toFixed(3)}`, 'Share price']}
                 />
                 <Area
                   dataKey="sharePrice"
-                  stroke="#3B82F6"
+                  stroke="#2563EB"
                   fill="url(#sharePriceFill)"
                   strokeWidth={2}
                   type="monotone"
                 />
                 <defs>
                   <linearGradient id="sharePriceFill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.28} />
-                    <stop offset="100%" stopColor="#3B82F6" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#2563EB" stopOpacity={0.28} />
+                    <stop offset="100%" stopColor="#2563EB" stopOpacity={0} />
                   </linearGradient>
                 </defs>
               </AreaChart>
@@ -193,16 +193,16 @@ export default function Dashboard() {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={sharePriceHistory}>
                 <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                <XAxis dataKey="label" stroke="#52535A" tickLine={false} axisLine={false} />
-                <YAxis stroke="#52535A" tickLine={false} axisLine={false} />
+                <XAxis dataKey="label" stroke="#71717A" tickLine={false} axisLine={false} />
+                <YAxis stroke="#71717A" tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: '#12131A',
-                    border: '1px solid #1E2028',
+                    backgroundColor: '#18181B',
+                    border: '1px solid #27272A',
                     borderRadius: 12,
                   }}
                 />
-                <Bar dataKey="inflow" fill="#3B82F6" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="inflow" fill="#2563EB" radius={[6, 6, 0, 0]} />
                 <Bar dataKey="outflow" fill="#F59E0B" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

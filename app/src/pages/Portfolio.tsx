@@ -64,26 +64,26 @@ export default function Portfolio() {
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={sharePriceHistory}>
                 <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                <XAxis dataKey="label" stroke="#52535A" tickLine={false} axisLine={false} />
-                <YAxis stroke="#52535A" tickLine={false} axisLine={false} />
+                <XAxis dataKey="label" stroke="#71717A" tickLine={false} axisLine={false} />
+                <YAxis stroke="#71717A" tickLine={false} axisLine={false} />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: '#12131A',
-                    border: '1px solid #1E2028',
+                    backgroundColor: '#18181B',
+                    border: '1px solid #27272A',
                     borderRadius: 12,
                   }}
                 />
                 <Area
                   dataKey="sharePrice"
                   fill="url(#portfolioFill)"
-                  stroke="#3B82F6"
+                  stroke="#2563EB"
                   strokeWidth={2}
                   type="monotone"
                 />
                 <defs>
                   <linearGradient id="portfolioFill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.24} />
-                    <stop offset="100%" stopColor="#3B82F6" stopOpacity={0} />
+                    <stop offset="0%" stopColor="#2563EB" stopOpacity={0.24} />
+                    <stop offset="100%" stopColor="#2563EB" stopOpacity={0} />
                   </linearGradient>
                 </defs>
               </AreaChart>
@@ -104,7 +104,7 @@ export default function Portfolio() {
               <Link
                 key={action.to}
                 className={cn(
-                  'inline-flex h-11 items-center justify-center rounded-full border px-5 text-sm transition-colors',
+                  'inline-flex h-11 items-center justify-center rounded-lg border px-5 text-sm transition-colors duration-150',
                   action.accent
                     ? 'border-transparent bg-accent text-white hover:bg-accent-hover'
                     : 'border-border bg-surface text-text-primary hover:bg-elevated',

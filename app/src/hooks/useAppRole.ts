@@ -14,8 +14,8 @@ export function useAppRole() {
   const isSquadsMember = publicKey ? governanceMembers.includes(publicKey.toBase58()) : false;
   const role = !publicKey ? 'guest' : isAuthority || isSquadsMember ? 'operator' : 'investor';
 
-  const console = pathname.startsWith('/developer')
-    ? 'developer'
+  const console = pathname.startsWith('/institution')
+    ? 'institution'
     : pathname.startsWith('/investor')
       ? 'investor'
       : null;

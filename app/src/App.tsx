@@ -31,13 +31,12 @@ export function AppShell() {
   return (
     <ToastProvider>
       <div className="relative min-h-screen bg-bg-primary text-text-primary">
-        <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.04),_transparent_50%)]" />
         <Routes>
           {/* Landing */}
           <Route path="/" element={<Landing />} />
 
-          {/* Developer Console */}
-          <Route path="/developer" element={<DeveloperLayout />}>
+          {/* Institution Console */}
+          <Route path="/institution" element={<DeveloperLayout />}>
             <Route index element={<Dashboard />} />
             <Route path="onboard" element={<Credential />} />
             <Route path="yield" element={<OperatorYield />} />
@@ -55,14 +54,23 @@ export function AppShell() {
             <Route path="withdraw" element={<Withdraw />} />
           </Route>
 
-          {/* Legacy redirects */}
-          <Route path="/operator" element={<Navigate replace to="/developer" />} />
-          <Route path="/operator/onboard" element={<Navigate replace to="/developer/onboard" />} />
-          <Route path="/operator/yield" element={<Navigate replace to="/developer/yield" />} />
-          <Route path="/operator/risk" element={<Navigate replace to="/developer/risk" />} />
-          <Route path="/operator/governance" element={<Navigate replace to="/developer/governance" />} />
-          <Route path="/compliance" element={<Navigate replace to="/developer/compliance" />} />
-          <Route path="/compliance/:id" element={<Navigate replace to="/developer/compliance/:id" />} />
+          {/* Legacy redirects — developer → institution */}
+          <Route path="/developer" element={<Navigate replace to="/institution" />} />
+          <Route path="/developer/onboard" element={<Navigate replace to="/institution/onboard" />} />
+          <Route path="/developer/yield" element={<Navigate replace to="/institution/yield" />} />
+          <Route path="/developer/risk" element={<Navigate replace to="/institution/risk" />} />
+          <Route path="/developer/governance" element={<Navigate replace to="/institution/governance" />} />
+          <Route path="/developer/compliance" element={<Navigate replace to="/institution/compliance" />} />
+          <Route path="/developer/compliance/:id" element={<Navigate replace to="/institution/compliance/:id" />} />
+
+          {/* Legacy redirects — operator → institution */}
+          <Route path="/operator" element={<Navigate replace to="/institution" />} />
+          <Route path="/operator/onboard" element={<Navigate replace to="/institution/onboard" />} />
+          <Route path="/operator/yield" element={<Navigate replace to="/institution/yield" />} />
+          <Route path="/operator/risk" element={<Navigate replace to="/institution/risk" />} />
+          <Route path="/operator/governance" element={<Navigate replace to="/institution/governance" />} />
+          <Route path="/compliance" element={<Navigate replace to="/institution/compliance" />} />
+          <Route path="/compliance/:id" element={<Navigate replace to="/institution/compliance/:id" />} />
           <Route path="/portfolio" element={<Navigate replace to="/investor" />} />
           <Route path="/deposit" element={<Navigate replace to="/investor/deposit" />} />
           <Route path="/transfer" element={<Navigate replace to="/investor/transfer" />} />

@@ -12,12 +12,12 @@ import { BrandMark } from './AppChrome';
 import { cn } from '../../lib/utils';
 
 const navItems = [
-  { icon: BarChart3, label: 'Dashboard', to: '/developer' },
-  { icon: UserPlus, label: 'KYC Onboarding', to: '/developer/onboard' },
-  { icon: TrendingUp, label: 'Yield Management', to: '/developer/yield' },
-  { icon: ShieldCheck, label: 'Risk Controls', to: '/developer/risk' },
-  { icon: Landmark, label: 'Governance', to: '/developer/governance' },
-  { icon: Eye, label: 'Compliance', to: '/developer/compliance' },
+  { icon: BarChart3, label: 'Dashboard', to: '/institution' },
+  { icon: UserPlus, label: 'KYC Onboarding', to: '/institution/onboard' },
+  { icon: TrendingUp, label: 'Yield Management', to: '/institution/yield' },
+  { icon: ShieldCheck, label: 'Risk Controls', to: '/institution/risk' },
+  { icon: Landmark, label: 'Governance', to: '/institution/governance' },
+  { icon: Eye, label: 'Compliance', to: '/institution/compliance' },
 ];
 
 export default function DeveloperLayout() {
@@ -28,8 +28,8 @@ export default function DeveloperLayout() {
           <NavLink to="/">
             <BrandMark />
           </NavLink>
-          <p className="mt-4 text-[11px] uppercase tracking-[0.24em] text-text-tertiary">
-            Developer Console
+          <p className="mt-4 font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-text-tertiary">
+            Institution Console
           </p>
         </div>
 
@@ -41,13 +41,13 @@ export default function DeveloperLayout() {
                 key={item.to}
                 className={({ isActive }) =>
                   cn(
-                    'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors',
+                    'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors duration-150',
                     isActive
                       ? 'bg-elevated text-text-primary'
                       : 'text-text-secondary hover:bg-elevated/60 hover:text-text-primary',
                   )
                 }
-                end={item.to === '/developer'}
+                end={item.to === '/institution'}
                 to={item.to}
               >
                 <Icon className="h-4 w-4 shrink-0" />
