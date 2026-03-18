@@ -54,7 +54,7 @@ function isClusterEnv(value: string | undefined): value is ClusterEnv {
 
 export function getConfig(): AppConfig {
   const selected = import.meta.env.VITE_CLUSTER;
-  const cluster = isClusterEnv(selected) ? selected : 'localnet';
+  const cluster = isClusterEnv(selected) ? selected : 'devnet';
 
   return CONFIGS[cluster];
 }

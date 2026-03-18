@@ -3,6 +3,7 @@ import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
+  Lock,
   Repeat2,
   Wallet,
 } from 'lucide-react';
@@ -14,6 +15,7 @@ const navItems = [
   { icon: ArrowDownToLine, label: 'Deposit', to: '/investor/deposit' },
   { icon: Repeat2, label: 'Transfer', to: '/investor/transfer' },
   { icon: ArrowUpFromLine, label: 'Withdraw', to: '/investor/withdraw' },
+  { icon: Lock, label: 'Confidential', to: '/investor/confidential' },
 ];
 
 export default function InvestorLayout() {
