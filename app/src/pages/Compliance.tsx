@@ -25,7 +25,7 @@ type SortKey = 'amount' | 'timestamp' | 'type';
 
 export default function Compliance() {
   const navigate = useNavigate();
-  const { records, usingMockRecords } = useInstitutionalData();
+  const { records } = useInstitutionalData();
   const { alerts } = useMonitoring();
   const [query, setQuery] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('timestamp');
@@ -84,9 +84,7 @@ export default function Compliance() {
                 Sortable investigation queue with proof hashes, signer identities, and decryption status.
               </CardDescription>
             </div>
-            <Badge variant={usingMockRecords ? 'warning' : 'success'}>
-              {usingMockRecords ? 'Demo fallback records' : 'Live transfer records'}
-            </Badge>
+            <Badge variant="success">Live</Badge>
           </div>
         </CardHeader>
         <CardContent className="grid gap-4">

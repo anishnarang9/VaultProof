@@ -1,6 +1,98 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, ShieldCheck, FileCheck, Activity } from 'lucide-react';
 import { BrandMark } from '../components/layout/AppChrome';
+
+function PrivacyDiagram() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-4 px-6">
+      <div className="flex items-center gap-3">
+        <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-accent/30 bg-accent/10">
+          <ShieldCheck className="h-5 w-5 text-accent" />
+        </div>
+        <div className="h-px w-8 bg-border" />
+        <div className="rounded-lg border border-border bg-bg-primary px-3 py-2">
+          <p className="font-mono text-[10px] text-text-tertiary">ZK PROOF</p>
+          <p className="font-mono text-[11px] text-accent">Groth16</p>
+        </div>
+        <div className="h-px w-8 bg-border" />
+        <div className="rounded-lg border border-success/30 bg-success/10 px-3 py-2">
+          <p className="font-mono text-[10px] text-text-tertiary">ON-CHAIN</p>
+          <p className="font-mono text-[11px] text-success">Verified</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-6 text-[10px]">
+        <span className="rounded border border-border px-2 py-1 font-mono text-text-tertiary">KYC</span>
+        <span className="rounded border border-border px-2 py-1 font-mono text-text-tertiary">Jurisdiction</span>
+        <span className="rounded border border-border px-2 py-1 font-mono text-text-tertiary">Accreditation</span>
+        <span className="rounded border border-border px-2 py-1 font-mono text-text-tertiary">AML Tier</span>
+      </div>
+      <p className="font-mono text-[10px] text-text-tertiary">Identity never touches the chain</p>
+    </div>
+  );
+}
+
+function ComplianceDiagram() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6">
+      <div className="flex items-center gap-2">
+        {['Deposit', 'Transfer', 'Withdraw'].map((type, i) => (
+          <div key={type} className="flex items-center gap-2">
+            {i > 0 && <div className="h-px w-4 bg-border" />}
+            <div className="rounded-lg border border-border bg-bg-primary px-3 py-2 text-center">
+              <p className="font-mono text-[10px] text-text-tertiary">{type}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      <svg width="2" height="24" className="text-border"><line x1="1" y1="0" x2="1" y2="24" stroke="currentColor" strokeDasharray="4 2" /></svg>
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-success/30 bg-success/10">
+          <FileCheck className="h-4 w-4 text-success" />
+        </div>
+        <div>
+          <p className="font-mono text-[11px] font-medium text-text-primary">TransferRecord</p>
+          <p className="font-mono text-[10px] text-text-tertiary">Proof hash + encrypted metadata + timestamp</p>
+        </div>
+      </div>
+      <svg width="2" height="16" className="text-border"><line x1="1" y1="0" x2="1" y2="16" stroke="currentColor" strokeDasharray="4 2" /></svg>
+      <div className="flex items-center gap-4 text-[10px]">
+        <span className="rounded border border-success/30 px-2 py-1 font-mono text-success">Source of Funds</span>
+        <span className="rounded border border-accent/30 px-2 py-1 font-mono text-accent">Multisig Decrypt</span>
+      </div>
+    </div>
+  );
+}
+
+function RiskDiagram() {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6">
+      <div className="flex items-center gap-4">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-warning/30 bg-warning/10">
+          <Activity className="h-4 w-4 text-warning" />
+        </div>
+        <div>
+          <p className="font-mono text-[11px] font-medium text-text-primary">Risk Oracle</p>
+          <p className="font-mono text-[10px] text-text-tertiary">Per-address scoring + staleness checks</p>
+        </div>
+      </div>
+      <div className="grid w-full max-w-[320px] grid-cols-2 gap-2">
+        {[
+          ['Circuit Breaker', '500K USDC'],
+          ['Max Transaction', '250K USDC'],
+          ['Velocity Limit', '40/day'],
+          ['Deposit Cap', '1M USDC'],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded border border-border bg-bg-primary px-3 py-2">
+            <p className="font-mono text-[9px] text-text-tertiary">{label}</p>
+            <p className="font-mono text-[11px] text-text-primary">{value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const bundleDiagrams = [PrivacyDiagram, ComplianceDiagram, RiskDiagram];
 
 const bundles = [
   {
@@ -113,8 +205,31 @@ export default function Landing() {
             </div>
           </div>
           <div className="hidden lg:block">
-            <div className="flex h-[320px] items-center justify-center rounded-2xl border border-border bg-surface">
-              <span className="font-mono text-[11px] text-text-tertiary">[ ZK circuit visualization ]</span>
+            <div className="flex h-[320px] flex-col items-center justify-center gap-4 rounded-2xl border border-border bg-surface px-8">
+              <div className="flex items-center gap-3">
+                <div className="rounded-lg border border-border bg-bg-primary px-4 py-3 text-center">
+                  <p className="font-mono text-[9px] uppercase text-text-tertiary">Witness</p>
+                  <p className="font-mono text-[12px] text-text-primary">Private Input</p>
+                </div>
+                <svg width="32" height="2"><line x1="0" y1="1" x2="32" y2="1" stroke="#27272A" /></svg>
+                <div className="relative rounded-xl border border-accent/40 bg-accent/5 px-5 py-4 text-center">
+                  <div className="absolute -top-2 left-1/2 -translate-x-1/2 rounded bg-accent px-2 py-0.5 font-mono text-[8px] font-medium text-white">GROTH16</div>
+                  <p className="mt-1 font-mono text-[10px] text-text-tertiary">compliance.circom</p>
+                  <p className="font-mono text-[13px] font-medium text-accent">49K constraints</p>
+                  <p className="font-mono text-[9px] text-text-tertiary">22 public inputs</p>
+                </div>
+                <svg width="32" height="2"><line x1="0" y1="1" x2="32" y2="1" stroke="#27272A" /></svg>
+                <div className="rounded-lg border border-success/30 bg-success/10 px-4 py-3 text-center">
+                  <p className="font-mono text-[9px] uppercase text-text-tertiary">Output</p>
+                  <p className="font-mono text-[12px] text-success">Proof</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap justify-center gap-2">
+                {['EdDSA Sig', 'Merkle Path', 'AML Tiers', 'ElGamal Enc', 'Solvency'].map((label) => (
+                  <span key={label} className="rounded border border-border px-2 py-1 font-mono text-[9px] text-text-tertiary">{label}</span>
+                ))}
+              </div>
+              <p className="font-mono text-[10px] text-text-tertiary">Browser-side proof generation via snarkjs + WASM</p>
             </div>
           </div>
         </div>
@@ -165,7 +280,7 @@ export default function Landing() {
                 </p>
               </div>
               <div className="flex h-[200px] items-center justify-center rounded-xl border border-border bg-surface">
-                <span className="font-mono text-[11px] text-text-tertiary">[ {bundle.label} diagram ]</span>
+                {(() => { const Diagram = bundleDiagrams[i]; return Diagram ? <Diagram /> : null; })()}
               </div>
             </div>
           ))}

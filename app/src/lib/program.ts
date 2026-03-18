@@ -167,6 +167,117 @@ const vaultProgramIdl = {
       ],
       args: [],
     },
+    {
+      name: 'update_risk_limits',
+      discriminator: [48, 53, 83, 216, 119, 29, 74, 182],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'authority', signer: true },
+      ],
+      args: [
+        { name: 'circuit_breaker_threshold', type: 'u64' },
+        { name: 'max_single_transaction', type: 'u64' },
+        { name: 'max_single_deposit', type: 'u64' },
+        { name: 'max_daily_transactions', type: 'u32' },
+      ],
+    },
+    {
+      name: 'unpause_vault',
+      discriminator: [125, 29, 213, 213, 114, 155, 125, 63],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'authority', signer: true },
+      ],
+      args: [],
+    },
+    {
+      name: 'add_yield_venue',
+      discriminator: [154, 2, 62, 195, 82, 190, 63, 8],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'yield_venue', writable: true },
+        { name: 'authority', writable: true, signer: true },
+        { name: 'system_program', address: SystemProgram.programId.toBase58() },
+      ],
+      args: [
+        { name: 'venue_address', type: 'pubkey' },
+        { name: 'name', type: 'string' },
+        { name: 'jurisdiction_whitelist', type: { array: ['u8', 32] } },
+        { name: 'allocation_cap_bps', type: 'u16' },
+        { name: 'risk_rating', type: 'u8' },
+      ],
+    },
+    {
+      name: 'remove_yield_venue',
+      discriminator: [27, 11, 126, 231, 154, 110, 203, 229],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'yield_venue', writable: true },
+        { name: 'authority', writable: true, signer: true },
+      ],
+      args: [],
+    },
+    {
+      name: 'accrue_yield',
+      discriminator: [243, 28, 81, 65, 175, 178, 5, 112],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'authority', signer: true },
+      ],
+      args: [
+        { name: 'yield_amount', type: 'u64' },
+      ],
+    },
+    {
+      name: 'setup_confidential_vault',
+      discriminator: [163, 150, 49, 113, 33, 125, 177, 102],
+      accounts: [
+        { name: 'vault_state' },
+        { name: 'confidential_config', writable: true },
+        { name: 'confidential_share_mint' },
+        { name: 'authority', writable: true, signer: true },
+        { name: 'system_program', address: SystemProgram.programId.toBase58() },
+      ],
+      args: [
+        { name: 'auditor_elgamal_pubkey', type: { array: ['u8', 32] } },
+      ],
+    },
+    {
+      name: 'convert_to_confidential',
+      discriminator: [235, 138, 113, 23, 188, 100, 126, 167],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'confidential_config', writable: true },
+        { name: 'share_mint', writable: true },
+        { name: 'confidential_share_mint', writable: true },
+        { name: 'user_share_account', writable: true },
+        { name: 'user_confidential_account', writable: true },
+        { name: 'user', writable: true, signer: true },
+        { name: 'token_program' },
+        { name: 'confidential_token_program' },
+      ],
+      args: [
+        { name: 'amount', type: 'u64' },
+      ],
+    },
+    {
+      name: 'convert_from_confidential',
+      discriminator: [6, 87, 4, 59, 160, 140, 109, 71],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'confidential_config', writable: true },
+        { name: 'share_mint', writable: true },
+        { name: 'confidential_share_mint', writable: true },
+        { name: 'user_share_account', writable: true },
+        { name: 'user_confidential_account', writable: true },
+        { name: 'user', writable: true, signer: true },
+        { name: 'token_program' },
+        { name: 'confidential_token_program' },
+      ],
+      args: [
+        { name: 'amount', type: 'u64' },
+      ],
+    },
   ],
   accounts: [
     {
@@ -460,6 +571,14 @@ export function deriveCredentialLeafPda(leafHash: Uint8Array) {
 
 export function deriveDecryptionAuthorizationPda(transferRecord: PublicKey) {
   return derivePda(COMPLIANCE_ADMIN_PROGRAM_ID, 'decryption_auth', transferRecord);
+}
+
+export function deriveYieldVenuePda(vaultState: PublicKey, venueAddress: PublicKey) {
+  return derivePda(VUSD_VAULT_PROGRAM_ID, 'yield_venue', vaultState, venueAddress);
+}
+
+export function deriveConfidentialConfigPda(vaultState: PublicKey) {
+  return derivePda(VUSD_VAULT_PROGRAM_ID, 'confidential_config', vaultState);
 }
 
 function createProvider(connection: Connection, wallet: AnchorWallet) {
@@ -971,4 +1090,190 @@ export async function buildAuthorizeDecryptionTx(params: {
 export async function getCurrentLeafIndex(program: Program<Idl>) {
   const stateTree = await fetchStateTree(program);
   return stateTree.nextIndex;
+}
+
+// ── Admin transaction builders ──
+
+export function buildUpdateRiskLimitsTx(params: {
+  program: Program<Idl>;
+  circuitBreakerThreshold: BN;
+  maxSingleTransaction: BN;
+  maxSingleDeposit: BN;
+  maxDailyTransactions: number;
+  signer: PublicKey;
+}) {
+  const { program, circuitBreakerThreshold, maxSingleTransaction, maxSingleDeposit, maxDailyTransactions, signer } = params;
+
+  return new Transaction().add(
+    createInstruction(program, 'update_risk_limits', {
+      circuit_breaker_threshold: circuitBreakerThreshold,
+      max_single_transaction: maxSingleTransaction,
+      max_single_deposit: maxSingleDeposit,
+      max_daily_transactions: maxDailyTransactions,
+    }, [
+      { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
+      { pubkey: signer, isSigner: true, isWritable: false },
+    ]),
+  );
+}
+
+export function buildUnpauseVaultTx(params: {
+  program: Program<Idl>;
+  signer: PublicKey;
+}) {
+  return new Transaction().add(
+    createInstruction(params.program, 'unpause_vault', {}, [
+      { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
+      { pubkey: params.signer, isSigner: true, isWritable: false },
+    ]),
+  );
+}
+
+export function buildAddYieldVenueTx(params: {
+  program: Program<Idl>;
+  venueAddress: PublicKey;
+  name: string;
+  jurisdictionWhitelist: number[];
+  allocationCapBps: number;
+  riskRating: number;
+  signer: PublicKey;
+}) {
+  const { program, venueAddress, name, jurisdictionWhitelist, allocationCapBps, riskRating, signer } = params;
+  const vaultStatePda = deriveVaultStatePda();
+
+  return new Transaction().add(
+    createInstruction(program, 'add_yield_venue', {
+      venue_address: venueAddress,
+      name,
+      jurisdiction_whitelist: jurisdictionWhitelist,
+      allocation_cap_bps: allocationCapBps,
+      risk_rating: riskRating,
+    }, [
+      { pubkey: vaultStatePda, isSigner: false, isWritable: true },
+      { pubkey: deriveYieldVenuePda(vaultStatePda, venueAddress), isSigner: false, isWritable: true },
+      { pubkey: signer, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ]),
+  );
+}
+
+export function buildRemoveYieldVenueTx(params: {
+  program: Program<Idl>;
+  venueAddress: PublicKey;
+  signer: PublicKey;
+}) {
+  const vaultStatePda = deriveVaultStatePda();
+
+  return new Transaction().add(
+    createInstruction(params.program, 'remove_yield_venue', {}, [
+      { pubkey: vaultStatePda, isSigner: false, isWritable: true },
+      { pubkey: deriveYieldVenuePda(vaultStatePda, params.venueAddress), isSigner: false, isWritable: true },
+      { pubkey: params.signer, isSigner: true, isWritable: true },
+    ]),
+  );
+}
+
+export function buildAccrueYieldTx(params: {
+  program: Program<Idl>;
+  yieldAmount: BN;
+  signer: PublicKey;
+}) {
+  return new Transaction().add(
+    createInstruction(params.program, 'accrue_yield', {
+      yield_amount: params.yieldAmount,
+    }, [
+      { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
+      { pubkey: params.signer, isSigner: true, isWritable: false },
+    ]),
+  );
+}
+
+export function buildSetupConfidentialVaultTx(params: {
+  program: Program<Idl>;
+  confidentialShareMint: PublicKey;
+  auditorElgamalPubkey: number[];
+  signer: PublicKey;
+}) {
+  const vaultStatePda = deriveVaultStatePda();
+
+  return new Transaction().add(
+    createInstruction(params.program, 'setup_confidential_vault', {
+      auditor_elgamal_pubkey: params.auditorElgamalPubkey,
+    }, [
+      { pubkey: vaultStatePda, isSigner: false, isWritable: false },
+      { pubkey: deriveConfidentialConfigPda(vaultStatePda), isSigner: false, isWritable: true },
+      { pubkey: params.confidentialShareMint, isSigner: false, isWritable: false },
+      { pubkey: params.signer, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ]),
+  );
+}
+
+const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+
+export async function buildConvertToConfidentialTx(params: {
+  program: Program<Idl>;
+  amount: BN;
+  signer: PublicKey;
+}) {
+  const { program, amount, signer } = params;
+  const vaultState = await fetchVaultState(program);
+  const vaultStatePda = deriveVaultStatePda();
+  const confidentialConfig = deriveConfidentialConfigPda(vaultStatePda);
+  const confidentialShareMint = await fetchConfidentialShareMint(program.provider.connection, confidentialConfig);
+  const userShareAccount = deriveAssociatedTokenAddress(signer, vaultState.shareMint);
+  const userConfidentialAccount = deriveAssociatedTokenAddress(signer, confidentialShareMint);
+
+  return new Transaction().add(
+    createInstruction(program, 'convert_to_confidential', { amount }, [
+      { pubkey: vaultStatePda, isSigner: false, isWritable: true },
+      { pubkey: confidentialConfig, isSigner: false, isWritable: true },
+      { pubkey: vaultState.shareMint, isSigner: false, isWritable: true },
+      { pubkey: confidentialShareMint, isSigner: false, isWritable: true },
+      { pubkey: userShareAccount, isSigner: false, isWritable: true },
+      { pubkey: userConfidentialAccount, isSigner: false, isWritable: true },
+      { pubkey: signer, isSigner: true, isWritable: true },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+    ]),
+  );
+}
+
+export async function buildConvertFromConfidentialTx(params: {
+  program: Program<Idl>;
+  amount: BN;
+  signer: PublicKey;
+}) {
+  const { program, amount, signer } = params;
+  const vaultState = await fetchVaultState(program);
+  const vaultStatePda = deriveVaultStatePda();
+  const confidentialConfig = deriveConfidentialConfigPda(vaultStatePda);
+  const confidentialShareMint = await fetchConfidentialShareMint(program.provider.connection, confidentialConfig);
+  const userShareAccount = deriveAssociatedTokenAddress(signer, vaultState.shareMint);
+  const userConfidentialAccount = deriveAssociatedTokenAddress(signer, confidentialShareMint);
+
+  return new Transaction().add(
+    createInstruction(program, 'convert_from_confidential', { amount }, [
+      { pubkey: vaultStatePda, isSigner: false, isWritable: true },
+      { pubkey: confidentialConfig, isSigner: false, isWritable: true },
+      { pubkey: vaultState.shareMint, isSigner: false, isWritable: true },
+      { pubkey: confidentialShareMint, isSigner: false, isWritable: true },
+      { pubkey: userShareAccount, isSigner: false, isWritable: true },
+      { pubkey: userConfidentialAccount, isSigner: false, isWritable: true },
+      { pubkey: signer, isSigner: true, isWritable: true },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_2022_PROGRAM_ID, isSigner: false, isWritable: false },
+    ]),
+  );
+}
+
+async function fetchConfidentialShareMint(connection: Connection, confidentialConfig: PublicKey): Promise<PublicKey> {
+  const info = await connection.getAccountInfo(confidentialConfig);
+  if (!info) {
+    throw new Error('Confidential vault not configured. Set up confidential transfers first.');
+  }
+  // The confidential_share_mint pubkey is stored after the 8-byte discriminator + 1 byte (enabled) = offset 9, 32 bytes
+  // ConfidentialVaultConfig: enabled(bool=1), confidential_share_mint(pubkey=32), auditor_elgamal_pubkey([u8;32]=32), bump(u8=1)
+  const data = Buffer.from(info.data);
+  return new PublicKey(data.subarray(8 + 1, 8 + 1 + 32));
 }

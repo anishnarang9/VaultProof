@@ -1,22 +1,10 @@
 import { BN } from '@coral-xyz/anchor';
-import { PublicKey } from '@solana/web3.js';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useMemo } from 'react';
 import { useRegistryState } from './useRegistryState';
 import { useTransferRecords } from './useTransferRecords';
 import { useVaultState } from './useVaultState';
-import { TransferType, createEmptyTransferRecord, type TransferRecordWithAddress } from '../lib/types';
-
-export interface YieldVenueView {
-  active: boolean;
-  allocationCapBps: number;
-  connected: boolean;
-  currentAllocationUsd: number;
-  id: string;
-  jurisdiction: string;
-  name: string;
-  riskRating: 'Low' | 'Moderate' | 'Elevated';
-}
+import { TransferType } from '../lib/types';
 
 export interface GovernanceProposalView {
   description: string;
@@ -33,121 +21,9 @@ export interface TrackMappingItem {
   status: string;
 }
 
-function createKey(seed: number) {
-  const bytes = new Uint8Array(32).fill(seed);
-  bytes[0] = seed || 1;
-  return new PublicKey(bytes);
-}
-
 function toNumber(value: BN | number) {
   return value instanceof BN ? Number(value.toString()) : value;
 }
-
-function createMockRecords(investor?: PublicKey): TransferRecordWithAddress[] {
-  const investorKey = investor ?? createKey(24);
-  const now = Math.floor(Date.now() / 1000);
-  const entries = [
-    {
-      address: createKey(40),
-      amount: new BN(180_000),
-      decryptionAuthorized: true,
-      encryptedMetadata: Array.from({ length: 16 }, (_, index) => index + 1),
-      proofHash: Array.from({ length: 32 }, (_, index) => (index * 3) % 255),
-      signer: investorKey,
-      timestamp: new BN(now - 86_400 * 12),
-      transferType: TransferType.Deposit,
-    },
-    {
-      address: createKey(41),
-      amount: new BN(45_000),
-      decryptionAuthorized: false,
-      encryptedMetadata: Array.from({ length: 16 }, (_, index) => (index * 5) % 255),
-      proofHash: Array.from({ length: 32 }, (_, index) => (index * 7) % 255),
-      signer: investorKey,
-      timestamp: new BN(now - 86_400 * 8),
-      transferType: TransferType.Transfer,
-    },
-    {
-      address: createKey(42),
-      amount: new BN(28_000),
-      decryptionAuthorized: false,
-      encryptedMetadata: Array.from({ length: 16 }, (_, index) => (index * 9) % 255),
-      proofHash: Array.from({ length: 32 }, (_, index) => (index * 11) % 255),
-      signer: investorKey,
-      timestamp: new BN(now - 86_400 * 3),
-      transferType: TransferType.Withdrawal,
-    },
-  ];
-
-  return entries.map((entry) => ({
-    ...createEmptyTransferRecord(entry),
-    address: entry.address,
-  }));
-}
-
-const defaultGovernanceMembers = [createKey(9), createKey(10), createKey(11)].map((key) =>
-  key.toBase58(),
-);
-
-const defaultYieldVenues: YieldVenueView[] = [
-  {
-    active: true,
-    allocationCapBps: 3_500,
-    connected: true,
-    currentAllocationUsd: 540_000,
-    id: 'kamino-main',
-    jurisdiction: 'Switzerland, Singapore',
-    name: 'Kamino Treasury Reserve',
-    riskRating: 'Low',
-  },
-  {
-    active: true,
-    allocationCapBps: 1_800,
-    connected: false,
-    currentAllocationUsd: 190_000,
-    id: 'cash-ladder',
-    jurisdiction: 'United States',
-    name: 'Treasury Bill Ladder',
-    riskRating: 'Low',
-  },
-  {
-    active: false,
-    allocationCapBps: 1_200,
-    connected: false,
-    currentAllocationUsd: 0,
-    id: 'stable-repo',
-    jurisdiction: 'EU',
-    name: 'Stable Repo Sleeve',
-    riskRating: 'Moderate',
-  },
-];
-
-const defaultProposals: GovernanceProposalView[] = [
-  {
-    description: 'Increase circuit breaker threshold for quarter-end settlement activity.',
-    eta: 'Ready for execution',
-    id: 'SQD-101',
-    signatures: '2 / 3 signers',
-    status: 'Ready',
-    title: 'Adjust daily outflow threshold',
-  },
-  {
-    description: 'Add Kamino venue to the approved venue registry with 35% cap.',
-    eta: 'Awaiting final signer',
-    id: 'SQD-102',
-    signatures: '1 / 3 signers',
-    status: 'Pending',
-    title: 'Approve Kamino allocation',
-  },
-  {
-    description: 'Authorize transfer metadata decryption for FINMA information request.',
-    eta: 'Executed 2 hours ago',
-    id: 'SQD-099',
-    signatures: '3 / 3 signers',
-    status: 'Executed',
-    title: 'Release Travel Rule payload',
-  },
-];
 
 const trackMapping: TrackMappingItem[] = [
   {
@@ -158,17 +34,17 @@ const trackMapping: TrackMappingItem[] = [
   {
     feature: 'Source-of-funds field inside the credential witness',
     requirement: 'Prove source of coins on regulator demand',
-    status: 'Ready',
+    status: 'Live',
   },
   {
-    feature: 'Client-side alerts and circuit breaker monitoring',
+    feature: 'Risk oracle + circuit breaker monitoring',
     requirement: 'Funds monitoring and risk controls',
-    status: 'Ready',
+    status: 'Live',
   },
   {
-    feature: 'Squads-style approval surface',
+    feature: 'Squads multisig governance',
     requirement: 'Institutional governance',
-    status: 'Mocked pending Agent 4',
+    status: 'Live',
   },
 ];
 
@@ -179,12 +55,8 @@ export function useInstitutionalData() {
   const transferState = useTransferRecords();
 
   const records = useMemo(() => {
-    if (transferState.records.length > 0) {
-      return transferState.records;
-    }
-
-    return createMockRecords(publicKey ?? undefined);
-  }, [publicKey, transferState.records]);
+    return transferState.records;
+  }, [transferState.records]);
 
   const sharePriceHistory = useMemo(() => {
     const ordered = [...records].sort(
@@ -259,8 +131,8 @@ export function useInstitutionalData() {
 
   return {
     depositHistory,
-    governanceMembers: defaultGovernanceMembers,
-    governanceProposals: defaultProposals,
+    governanceMembers: [] as string[],
+    governanceProposals: [] as GovernanceProposalView[],
     portfolio: {
       proportionalClaimUsd,
       shareBalance,
@@ -278,17 +150,15 @@ export function useInstitutionalData() {
     },
     sharePriceHistory,
     trackMapping,
-    usingMockRecords: transferState.records.length === 0,
     vaultState,
     yieldMetrics: {
-      currentVenue: defaultYieldVenues.find((venue) => venue.active)?.name ?? 'Liquid buffer',
+      currentVenue: 'Liquid buffer',
       liquidBufferUsd:
         toNumber(vaultState.data.totalAssets) * Math.max(0, 1 - vaultState.data.liquidBufferRatio),
       yieldRate:
         toNumber(vaultState.data.totalAssets) > 0
           ? (toNumber(vaultState.data.totalYieldEarned) / toNumber(vaultState.data.totalAssets)) * 100
-          : 4.2,
-      yieldVenues: defaultYieldVenues,
+          : 0,
     },
   };
 }

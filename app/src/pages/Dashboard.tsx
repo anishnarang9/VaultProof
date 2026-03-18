@@ -40,7 +40,6 @@ export default function Dashboard() {
     registryHealth,
     records,
     sharePriceHistory,
-    usingMockRecords,
     vaultState,
     yieldMetrics,
   } = useInstitutionalData();
@@ -90,12 +89,9 @@ export default function Dashboard() {
                 <CardTitle>Operator overview</CardTitle>
                 <CardDescription>
                   Historical pricing and vault activity derived from TransferRecords.
-                  {usingMockRecords ? ' Demo fallback data is active until upstream vault records arrive.' : ''}
                 </CardDescription>
               </div>
-              <Badge variant={usingMockRecords ? 'warning' : 'success'}>
-                {usingMockRecords ? 'Demo data' : 'Live reads'}
-              </Badge>
+              <Badge variant="success">Live</Badge>
             </div>
           </CardHeader>
           <CardContent className="h-[320px]">
