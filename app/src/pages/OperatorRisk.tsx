@@ -1,3 +1,5 @@
+import { BN } from '@coral-xyz/anchor';
+import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { useState } from 'react';
 import {
   Alert,
@@ -5,7 +7,6 @@ import {
   Button,
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
   Input,
@@ -14,6 +15,7 @@ import {
 import { useToast } from '../components/ui/primitives';
 import { useVaultState } from '../hooks/useVaultState';
 import { formatCurrency } from '../lib/format';
+import { buildUpdateRiskLimitsTx, buildUnpauseVaultTx, getPrograms } from '../lib/program';
 
 function usageColor(usage: number) {
   if (usage > 0.8) {
@@ -29,12 +31,96 @@ function usageColor(usage: number) {
 
 export default function OperatorRisk() {
   const { toast } = useToast();
-  const { data: vault } = useVaultState();
+  const vaultState = useVaultState();
+  const { data: vault } = vaultState;
+  const { connection } = useConnection();
+  const anchorWallet = useAnchorWallet();
+  const { publicKey, sendTransaction } = useWallet();
+
   const [threshold, setThreshold] = useState(vault.circuitBreakerThreshold.toString());
   const [singleTx, setSingleTx] = useState(vault.maxSingleTransaction.toString());
   const [singleDeposit, setSingleDeposit] = useState(vault.maxSingleDeposit.toString());
   const [maxDailyTransactions, setMaxDailyTransactions] = useState(String(vault.maxDailyTransactions));
-  const [paused, setPaused] = useState(vault.paused);
+  const [updatingLimits, setUpdatingLimits] = useState(false);
+  const [unpausing, setUnpausing] = useState(false);
+
+  const handleUpdateRiskLimits = async () => {
+    if (!anchorWallet || !publicKey || !sendTransaction) {
+      toast({
+        description: 'Connect an operator wallet to update risk limits.',
+        title: 'Wallet not connected',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setUpdatingLimits(true);
+    try {
+      const { vusdVault } = getPrograms(connection, anchorWallet);
+      const transaction = buildUpdateRiskLimitsTx({
+        program: vusdVault,
+        circuitBreakerThreshold: new BN(threshold),
+        maxSingleTransaction: new BN(singleTx),
+        maxSingleDeposit: new BN(singleDeposit),
+        maxDailyTransactions: Number(maxDailyTransactions),
+        signer: publicKey,
+      });
+      const signature = await sendTransaction(transaction, connection);
+      await connection.confirmTransaction(signature, 'confirmed');
+      toast({
+        description: signature,
+        title: 'Risk limits updated',
+        variant: 'success',
+      });
+      vaultState.refresh();
+    } catch (caughtError) {
+      toast({
+        description:
+          caughtError instanceof Error ? caughtError.message : 'Transaction failed.',
+        title: 'Risk limits update failed',
+        variant: 'destructive',
+      });
+    } finally {
+      setUpdatingLimits(false);
+    }
+  };
+
+  const handleUnpause = async () => {
+    if (!anchorWallet || !publicKey || !sendTransaction) {
+      toast({
+        description: 'Connect an operator wallet to unpause the vault.',
+        title: 'Wallet not connected',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setUnpausing(true);
+    try {
+      const { vusdVault } = getPrograms(connection, anchorWallet);
+      const transaction = buildUnpauseVaultTx({
+        program: vusdVault,
+        signer: publicKey,
+      });
+      const signature = await sendTransaction(transaction, connection);
+      await connection.confirmTransaction(signature, 'confirmed');
+      toast({
+        description: signature,
+        title: 'Vault unpaused',
+        variant: 'success',
+      });
+      vaultState.refresh();
+    } catch (caughtError) {
+      toast({
+        description:
+          caughtError instanceof Error ? caughtError.message : 'Transaction failed.',
+        title: 'Unpause failed',
+        variant: 'destructive',
+      });
+    } finally {
+      setUnpausing(false);
+    }
+  };
 
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -42,9 +128,6 @@ export default function OperatorRisk() {
         <CardHeader>
           <Badge variant="secondary">Risk Controls</Badge>
           <CardTitle className="mt-3">Circuit breaker and transaction limits</CardTitle>
-          <CardDescription>
-            Vault-level limits and the pause state are presented here. Final write actions land once the new vault IDL is available.
-          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-5">
           <div className="grid gap-5 md:grid-cols-2">
@@ -77,30 +160,19 @@ export default function OperatorRisk() {
           </div>
           <div className="flex flex-wrap gap-3">
             <Button
-              onClick={() =>
-                toast({
-                  description: 'Risk-limit update queued in demo mode.',
-                  title: 'Risk limits updated',
-                  variant: 'success',
-                })
-              }
+              disabled={updatingLimits}
+              onClick={handleUpdateRiskLimits}
               type="button"
             >
-              Update Risk Limits
+              {updatingLimits ? 'Submitting...' : 'Update Risk Limits'}
             </Button>
             <Button
-              onClick={() => {
-                setPaused((current) => !current);
-                toast({
-                  description: paused ? 'Vault unpaused in demo mode.' : 'Vault paused in demo mode.',
-                  title: paused ? 'Unpause requested' : 'Pause requested',
-                  variant: 'warning',
-                });
-              }}
+              disabled={!vault.paused || unpausing}
+              onClick={handleUnpause}
               type="button"
               variant="secondary"
             >
-              {paused ? 'Unpause Vault' : 'Pause Vault'}
+              {unpausing ? 'Unpausing...' : 'Unpause Vault'}
             </Button>
           </div>
         </CardContent>
@@ -110,9 +182,6 @@ export default function OperatorRisk() {
         <CardHeader>
           <Badge variant="outline">Current Status</Badge>
           <CardTitle className="mt-3">Circuit breaker proximity</CardTitle>
-          <CardDescription>
-            Daily outflow total, window start, and current proximity to trigger.
-          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="rounded-[var(--radius)] border border-border bg-bg-primary p-4">
@@ -131,9 +200,9 @@ export default function OperatorRisk() {
           </div>
 
           <Alert
-            description={`Daily outflow: ${formatCurrency(vault.dailyOutflowTotal)} • Threshold: ${formatCurrency(vault.circuitBreakerThreshold)}`}
-            title={paused ? 'Vault paused' : 'Vault operational'}
-            variant={paused ? 'destructive' : 'default'}
+            description={`Daily outflow: ${formatCurrency(vault.dailyOutflowTotal)} \u2022 Threshold: ${formatCurrency(vault.circuitBreakerThreshold)}`}
+            title={vault.paused ? 'Vault paused' : 'Vault operational'}
+            variant={vault.paused ? 'destructive' : 'default'}
           />
         </CardContent>
       </Card>

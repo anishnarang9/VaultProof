@@ -46,8 +46,12 @@ export async function airdropIfNeeded(
     return;
   }
 
-  const signature = await connection.requestAirdrop(pubkey, minimumLamports * 2);
-  await confirmSignature(connection, signature);
+  try {
+    const signature = await connection.requestAirdrop(pubkey, minimumLamports * 2);
+    await confirmSignature(connection, signature);
+  } catch {
+    console.warn(`Airdrop failed for ${pubkey.toBase58()} (rate limited?), skipping`);
+  }
 }
 
 export async function transferLamports(

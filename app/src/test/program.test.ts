@@ -7,9 +7,9 @@ import {
   getPrograms,
 } from '../lib/program';
 
-const VUSD_VAULT_PROGRAM_ID = new PublicKey('CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu');
-const KYC_REGISTRY_PROGRAM_ID = new PublicKey('NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD');
-const COMPLIANCE_ADMIN_PROGRAM_ID = new PublicKey('BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K');
+const VUSD_VAULT_PROGRAM_ID = new PublicKey('BQBzU5JXU9oBkezAqcnaRht4abWhKyqfYW3B2k5vAizT');
+const KYC_REGISTRY_PROGRAM_ID = new PublicKey('zeKuZBjVPQaGhsjLQDQ33K8piMDPZ8W7g8vUobNYZTR');
+const COMPLIANCE_ADMIN_PROGRAM_ID = new PublicKey('rcSKMdzuL7LLuTh322WXWiteSbqVPe5cR2hGDCNWtu4');
 const VAULT_STATE_PDA = new PublicKey('CFfJc2twicWbCwyZX2s7VZmtda6grkE2GYNNJkNF2hDo');
 const KYC_REGISTRY_PDA = new PublicKey('EY9cnxuWA3K5iDy1pLdN3GrLmd4Jh4BiKoR7Qj7QKRUY');
 const STATE_TREE_PDA = new PublicKey('8MgBPHCkeQitSpWQUNT6SrqGBMyuWZ7aLAEWsfktzwsK');

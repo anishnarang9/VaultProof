@@ -20,8 +20,8 @@ const endpoint = import.meta.env.VITE_SOLANA_RPC_URL ?? clusterApiUrl('devnet');
 const connection = new Connection(endpoint, 'confirmed');
 const textEncoder = new TextEncoder();
 
-const VUSD_VAULT_PROGRAM_ID = new PublicKey('CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu');
-const KYC_REGISTRY_PROGRAM_ID = new PublicKey('NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD');
+const VUSD_VAULT_PROGRAM_ID = new PublicKey('BQBzU5JXU9oBkezAqcnaRht4abWhKyqfYW3B2k5vAizT');
+const KYC_REGISTRY_PROGRAM_ID = new PublicKey('zeKuZBjVPQaGhsjLQDQ33K8piMDPZ8W7g8vUobNYZTR');
 
 const vaultAccountsIdl = {
   version: '0.1.0',
@@ -60,6 +60,16 @@ const vaultAccountsIdl = {
           { name: 'regulatorPubkeyY', type: { array: ['u8', 32] } },
           { name: 'bump', type: 'u8' },
           { name: 'reserveBump', type: 'u8' },
+          { name: 'custodyProvider', type: { defined: { name: 'custodyProvider' } } },
+          { name: 'custodyAuthority', type: 'pubkey' },
+          { name: 'paused', type: 'bool' },
+          { name: 'circuitBreakerThreshold', type: 'u64' },
+          { name: 'dailyOutflowTotal', type: 'u64' },
+          { name: 'outflowWindowStart', type: 'i64' },
+          { name: 'maxSingleTransaction', type: 'u64' },
+          { name: 'maxSingleDeposit', type: 'u64' },
+          { name: 'maxDailyTransactions', type: 'u32' },
+          { name: 'dailyTransactionCount', type: 'u32' },
         ],
       },
     },
@@ -85,6 +95,13 @@ const vaultAccountsIdl = {
       type: {
         kind: 'enum',
         variants: [{ name: 'deposit' }, { name: 'transfer' }, { name: 'withdrawal' }],
+      },
+    },
+    {
+      name: 'custodyProvider',
+      type: {
+        kind: 'enum',
+        variants: [{ name: 'selfCustody' }, { name: 'fireblocks' }, { name: 'bitGo' }, { name: 'anchorage' }],
       },
     },
   ],

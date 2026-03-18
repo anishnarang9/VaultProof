@@ -22,6 +22,7 @@ import OperatorRisk from './pages/OperatorRisk';
 import OperatorYield from './pages/OperatorYield';
 import Portfolio from './pages/Portfolio';
 import Transfer from './pages/Transfer';
+import Confidential from './pages/Confidential';
 import Withdraw from './pages/Withdraw';
 import { TestWalletAdapter } from './lib/test-wallet-adapter';
 
@@ -52,6 +53,7 @@ export function AppShell() {
             <Route path="deposit" element={<Deposit />} />
             <Route path="transfer" element={<Transfer />} />
             <Route path="withdraw" element={<Withdraw />} />
+            <Route path="confidential" element={<Confidential />} />
           </Route>
 
           {/* Legacy redirects — developer → institution */}

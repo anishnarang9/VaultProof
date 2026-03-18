@@ -123,7 +123,7 @@ export default function ComplianceDetail() {
           <Badge variant="outline">Decryption Status</Badge>
           <CardTitle className="mt-3">Release controls</CardTitle>
           <CardDescription>
-            Direct authority mode is active until the Squads multisig handoff lands from Agent 4.
+            Authorize decryption of encrypted Travel Rule metadata for this transfer record.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">

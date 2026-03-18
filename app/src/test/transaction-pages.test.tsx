@@ -1,5 +1,5 @@
 import { BN } from '@coral-xyz/anchor';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { PublicKey } from '@solana/web3.js';
@@ -188,6 +188,16 @@ vi.mock('../lib/credential', async () => {
   };
 });
 
+vi.mock('circomlibjs', () => {
+  const mockPoseidon = Object.assign(
+    (inputs: bigint[]) => inputs.reduce((a, b) => a ^ b, 0n),
+    { F: { toString: (v: bigint) => String(v) } },
+  );
+  return {
+    buildPoseidon: vi.fn(async () => mockPoseidon),
+  };
+});
+
 describe('frontend transaction pages', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -208,16 +218,106 @@ describe('frontend transaction pages', () => {
     expect(mockState.hashCredentialLeaf).not.toHaveBeenCalled();
   });
 
-  it('deposit builds and submits the deposit transaction after proof generation', async () => {
+  it('deposit wizard navigates through all steps and submits', async () => {
     const user = userEvent.setup();
     render(<Deposit />);
 
-    await user.click(screen.getByRole('button', { name: /generate proof and deposit/i }));
+    // Step 1: Full Name
+    expect(screen.getByRole('heading', { name: /full legal name/i })).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/full legal name/i), 'Jane Doe');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Step 2: Date of Birth (fireEvent for type=date in jsdom)
+    expect(screen.getByRole('heading', { name: /date of birth/i })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/date of birth/i), { target: { value: '1990-01-01' } });
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Step 3: Country
+    expect(screen.getByRole('heading', { name: /country of residence/i })).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText(/country of residence/i), 'US');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Step 4: Identity Number (US → Last 4 SSN)
+    expect(screen.getByRole('heading', { name: /identity verification/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/last 4 digits of ssn/i)).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/last 4 digits of ssn/i), '1234');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Step 5: Document Upload (optional, skip)
+    expect(screen.getByRole('heading', { name: /document upload/i })).toBeInTheDocument();
+    expect(screen.getByText(/ai verification coming soon/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Step 6: Accreditation
+    expect(screen.getByRole('heading', { name: /investor accreditation/i })).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText(/investor accreditation tier/i), 'institutional');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Step 7: Source of Funds
+    expect(screen.getByRole('heading', { name: /source of funds/i })).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/source of funds reference/i), 'Wire transfer from UBS');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Step 8: Amount
+    expect(screen.getByRole('heading', { name: /deposit amount/i })).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/deposit amount/i), '25000');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Step 9: Review
+    expect(screen.getByRole('heading', { name: /review & confirm/i })).toBeInTheDocument();
+    expect(screen.getByText('Jane Doe')).toBeInTheDocument();
+    expect(screen.getByText(/25,000 USDC/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /proceed to proof/i }));
+
+    // Step 10: Proof & Submit
+    expect(screen.getByRole('heading', { name: /generate proof & submit/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /generate proof & deposit/i }));
 
     await waitFor(() => expect(mockState.proofGenerate).toHaveBeenCalled());
     await waitFor(() => expect(mockState.proofToOnchainFormat).toHaveBeenCalled());
     await waitFor(() => expect(mockState.buildDepositTx).toHaveBeenCalled());
     await waitFor(() => expect(mockState.sendTransaction).toHaveBeenCalled());
+  });
+
+  it('deposit wizard shows country-conditional ID labels', async () => {
+    const user = userEvent.setup();
+    render(<Deposit />);
+
+    // Fill name and DOB to get to country step
+    await user.type(screen.getByLabelText(/full legal name/i), 'Test User');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+    fireEvent.change(screen.getByLabelText(/date of birth/i), { target: { value: '1995-06-15' } });
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Select UK
+    await user.selectOptions(screen.getByLabelText(/country of residence/i), 'GB');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Should show NIN label
+    expect(screen.getByLabelText(/national insurance number/i)).toBeInTheDocument();
+
+    // Go back and switch to Germany
+    await user.click(screen.getByRole('button', { name: /back/i }));
+    await user.selectOptions(screen.getByLabelText(/country of residence/i), 'DE');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Should show National ID label
+    expect(screen.getByLabelText(/national id number/i)).toBeInTheDocument();
+  });
+
+  it('deposit wizard back button preserves entered data', async () => {
+    const user = userEvent.setup();
+    render(<Deposit />);
+
+    // Fill name
+    await user.type(screen.getByLabelText(/full legal name/i), 'Jane Doe');
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Go to DOB step then back
+    await user.click(screen.getByRole('button', { name: /back/i }));
+
+    // Name should still be there
+    expect(screen.getByLabelText(/full legal name/i)).toHaveValue('Jane Doe');
   });
 
   it('compliance detail requests transfer record decryption', async () => {
