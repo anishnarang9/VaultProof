@@ -13,9 +13,9 @@ export interface AppConfig {
 }
 
 const PROGRAM_IDS = {
-  complianceAdmin: 'BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K',
-  kycRegistry: 'NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD',
-  vusdVault: 'CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu',
+  complianceAdmin: 'rcSKMdzuL7LLuTh322WXWiteSbqVPe5cR2hGDCNWtu4',
+  kycRegistry: 'zeKuZBjVPQaGhsjLQDQ33K8piMDPZ8W7g8vUobNYZTR',
+  vusdVault: 'BQBzU5JXU9oBkezAqcnaRht4abWhKyqfYW3B2k5vAizT',
 } as const;
 
 const CONFIGS: Record<ClusterEnv, AppConfig> = {

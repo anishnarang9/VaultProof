@@ -69,7 +69,7 @@ export async function initializeDevnetVault(): Promise<InitializedVault> {
   const authority = provider.wallet.publicKey;
   const payer = providerPayer(provider);
   const idl = loadIdl("vusd_vault");
-  const vaultProgram = new anchor.Program(idl, provider);
+  const vaultProgram = new anchor.Program(idl as any, provider) as any;
 
   const [vaultStatePda] = PublicKey.findProgramAddressSync(
     [Buffer.from("vault_state")],

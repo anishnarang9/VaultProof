@@ -34,7 +34,7 @@ export default function Deposit() {
   const { connection } = useConnection();
   const anchorWallet = useAnchorWallet();
   const { publicKey, sendTransaction } = useWallet();
-  const [amount, setAmount] = useState('25000');
+  const [amount, setAmount] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const proofGeneration = useProofGeneration();

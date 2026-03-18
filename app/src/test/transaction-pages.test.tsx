@@ -212,6 +212,7 @@ describe('frontend transaction pages', () => {
     const user = userEvent.setup();
     render(<Deposit />);
 
+    await user.type(screen.getByLabelText(/amount/i), '25000');
     await user.click(screen.getByRole('button', { name: /generate proof and deposit/i }));
 
     await waitFor(() => expect(mockState.proofGenerate).toHaveBeenCalled());

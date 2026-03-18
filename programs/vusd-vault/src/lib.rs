@@ -10,7 +10,7 @@ use solana_sha256_hasher::hashv;
 pub mod keys;
 use keys::verifying_key::{get_verifying_key, NR_PUBLIC_INPUTS};
 
-declare_id!("CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu");
+declare_id!("BQBzU5JXU9oBkezAqcnaRht4abWhKyqfYW3B2k5vAizT");
 
 pub const NUM_PUBLIC_INPUTS: usize = NR_PUBLIC_INPUTS;
 pub const ENCRYPTED_METADATA_START_INDEX: usize = 10;

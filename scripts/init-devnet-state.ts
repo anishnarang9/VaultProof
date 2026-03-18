@@ -95,14 +95,14 @@ async function fundFromPayerIfNeeded(
   connection: anchor.web3.Connection,
   payer: Keypair,
   recipient: PublicKey,
-  minimumLamports = LAMPORTS_PER_SOL,
+  minimumLamports = LAMPORTS_PER_SOL / 10,
 ) {
   const balance = await connection.getBalance(recipient, "confirmed");
   if (balance >= minimumLamports) {
     return;
   }
 
-  await transferLamports(connection, payer, recipient, minimumLamports * 2);
+  await transferLamports(connection, payer, recipient, minimumLamports + LAMPORTS_PER_SOL / 20);
 }
 
 async function loadPoseidon() {
@@ -257,9 +257,9 @@ async function loadOrCreateSquadsContext(
   ];
   const contextPath = resolve(OUTPUT_DIR, "squads-context.json");
 
-  await airdropIfNeeded(provider.connection, payer.publicKey, 2 * LAMPORTS_PER_SOL);
+  await airdropIfNeeded(provider.connection, payer.publicKey, LAMPORTS_PER_SOL / 2);
   for (const member of members) {
-    await fundFromPayerIfNeeded(provider.connection, payer, member.publicKey);
+    await fundFromPayerIfNeeded(provider.connection, payer, member.publicKey, LAMPORTS_PER_SOL / 10);
   }
 
   if (existsSync(contextPath)) {
@@ -282,7 +282,7 @@ async function loadOrCreateSquadsContext(
   }
 
   const squads = await createSquadsMultisig(provider.connection, members, 2, SQUADS_PROGRAM_ID);
-  await fundFromPayerIfNeeded(provider.connection, payer, squads.vaultPda, 2 * LAMPORTS_PER_SOL);
+  await fundFromPayerIfNeeded(provider.connection, payer, squads.vaultPda, LAMPORTS_PER_SOL / 2);
   writeFileSync(
     resolve(OUTPUT_DIR, "squads-create-key.json"),
     JSON.stringify(Array.from(squads.createKey.secretKey)),
