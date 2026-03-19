@@ -180,7 +180,7 @@ describe('frontend program client', () => {
       },
     );
 
-    const tx = await buildDepositTx({
+    const { storeProofTx, depositTx } = await buildDepositTx({
       amount: new BN(25_000),
       encryptedMetadata: Buffer.alloc(384, 7),
       program: programs.vusdVault,
@@ -191,17 +191,21 @@ describe('frontend program client', () => {
       signer: wallet.publicKey,
     });
 
-    const vaultInstructions = tx.instructions.filter((instruction) =>
+    const coder = new BorshInstructionCoder(programs.vusdVault.idl as Idl);
+
+    const storeInstructions = storeProofTx.instructions.filter((instruction) =>
       instruction.programId.equals(programs.vusdVault.programId),
     );
-    const coder = new BorshInstructionCoder(programs.vusdVault.idl as Idl);
-    const decoded = vaultInstructions.map((instruction) => coder.decode(instruction.data));
+    const depositInstructions = depositTx.instructions.filter((instruction) =>
+      instruction.programId.equals(programs.vusdVault.programId),
+    );
 
-    expect(decoded.map((instruction) => instruction?.name)).toEqual([
-      'storeProofData',
-      'depositWithProof',
-    ]);
-    expect((decoded[1]?.data as { amount: BN }).amount.toString()).toBe('25000');
+    const decodedStore = storeInstructions.map((instruction) => coder.decode(instruction.data));
+    const decodedDeposit = depositInstructions.map((instruction) => coder.decode(instruction.data));
+
+    expect(decodedStore.map((instruction) => instruction?.name)).toEqual(['storeProofData']);
+    expect(decodedDeposit.map((instruction) => instruction?.name)).toEqual(['depositWithProof']);
+    expect((decodedDeposit[0]?.data as { amount: BN }).amount.toString()).toBe('25000');
   });
 
   it('buildAddCredentialTx produces a Transaction with correct accounts', async () => {

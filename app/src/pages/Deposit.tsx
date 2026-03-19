@@ -301,7 +301,7 @@ export default function Deposit() {
         proofResult.proof,
         proofResult.publicSignals,
       );
-      const transaction = await buildDepositTx({
+      const { storeProofTx, depositTx } = await buildDepositTx({
         amount: new BN(numericAmount.toString()),
         encryptedMetadata: proofResult.encryptedMetadata,
         program: vusdVault,
@@ -311,7 +311,13 @@ export default function Deposit() {
         publicInputs,
         signer: publicKey,
       });
-      const signature = await sendTransaction(transaction, connection);
+
+      // Transaction 1: Store proof data in buffer PDA
+      const storeSig = await sendTransaction(storeProofTx, connection);
+      await connection.confirmTransaction(storeSig, 'confirmed');
+
+      // Transaction 2: Execute deposit referencing the proof buffer
+      const signature = await sendTransaction(depositTx, connection);
       await connection.confirmTransaction(signature, 'confirmed');
       await refresh();
       toast({

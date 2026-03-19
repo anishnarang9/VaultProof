@@ -71,7 +71,7 @@ export default function Transfer() {
         proofResult.proof,
         proofResult.publicSignals,
       );
-      const transaction = await buildTransferTx({
+      const { storeProofTx, transferTx } = await buildTransferTx({
         amount: new BN(numericAmount.toString()),
         encryptedMetadata: proofResult.encryptedMetadata,
         program: vusdVault,
@@ -82,7 +82,13 @@ export default function Transfer() {
         recipient: new PublicKey(recipient),
         signer: publicKey,
       });
-      const signature = await sendTransaction(transaction, connection);
+
+      // Transaction 1: Store proof data in buffer PDA
+      const storeSig = await sendTransaction(storeProofTx, connection);
+      await connection.confirmTransaction(storeSig, 'confirmed');
+
+      // Transaction 2: Execute transfer referencing the proof buffer
+      const signature = await sendTransaction(transferTx, connection);
       await connection.confirmTransaction(signature, 'confirmed');
       await refresh();
       toast({

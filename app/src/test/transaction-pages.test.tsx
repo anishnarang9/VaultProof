@@ -12,7 +12,7 @@ const mockState = vi.hoisted(() => ({
   authorityBytes: Array.from({ length: 32 }, () => 6),
   buildAddCredentialTx: vi.fn(async () => ({ instructions: [] })),
   buildAuthorizeDecryptionTx: vi.fn(async () => ({ instructions: [] })),
-  buildDepositTx: vi.fn(async () => ({ instructions: [] })),
+  buildDepositTx: vi.fn(async () => ({ storeProofTx: { instructions: [] }, depositTx: { instructions: [] } })),
   clearCredential: vi.fn(),
   connection: {
     confirmTransaction: vi.fn(async () => ({ value: { err: null } })),

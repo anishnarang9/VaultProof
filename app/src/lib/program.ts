@@ -830,31 +830,36 @@ export async function buildDepositTx(params: {
   amount: BN;
   encryptedMetadata: Uint8Array;
   signer: PublicKey;
-}) {
+}): Promise<{ storeProofTx: Transaction; depositTx: Transaction }> {
   const { program, proofA, proofB, proofC, publicInputs, amount, signer } = params;
   const connection = program.provider.connection;
   const vaultState = await fetchVaultState(program);
   const registry = deriveRegistryPda();
   const { proofBuffer, storeProofInstruction, transferRecord } =
     await createVaultProofInstructions(program, signer, proofA, proofB, proofC, publicInputs);
-  const transaction = new Transaction();
+
+  // Transaction 1: Store proof data in buffer PDA
+  const storeProofTx = new Transaction();
+  storeProofTx.add(storeProofInstruction);
+
+  // Transaction 2: Deposit referencing the proof buffer
+  const depositTx = new Transaction();
   const userUsdcAccount = await ensureAta(
-    transaction,
+    depositTx,
     connection,
     signer,
     signer,
     vaultState.usdcMint,
   );
   const stealthShareAccount = await ensureAta(
-    transaction,
+    depositTx,
     connection,
     signer,
     signer,
     vaultState.shareMint,
   );
 
-  transaction.add(storeProofInstruction);
-  transaction.add(
+  depositTx.add(
     createInstruction(program, 'deposit_with_proof', { amount: amountToArg(amount) }, [
       { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
       { pubkey: registry, isSigner: false, isWritable: false },
@@ -871,7 +876,7 @@ export async function buildDepositTx(params: {
     ]),
   );
 
-  return transaction;
+  return { storeProofTx, depositTx };
 }
 
 export async function buildTransferTx(params: {
@@ -884,31 +889,36 @@ export async function buildTransferTx(params: {
   encryptedMetadata: Uint8Array;
   recipient: PublicKey;
   signer: PublicKey;
-}) {
+}): Promise<{ storeProofTx: Transaction; transferTx: Transaction }> {
   const { program, proofA, proofB, proofC, publicInputs, amount, recipient, signer } = params;
   const connection = program.provider.connection;
   const vaultState = await fetchVaultState(program);
   const registry = deriveRegistryPda();
   const { proofBuffer, storeProofInstruction, transferRecord } =
     await createVaultProofInstructions(program, signer, proofA, proofB, proofC, publicInputs);
-  const transaction = new Transaction();
+
+  // Transaction 1: Store proof data in buffer PDA
+  const storeProofTx = new Transaction();
+  storeProofTx.add(storeProofInstruction);
+
+  // Transaction 2: Transfer referencing the proof buffer
+  const transferTx = new Transaction();
   const senderStealthAccount = await ensureAta(
-    transaction,
+    transferTx,
     connection,
     signer,
     signer,
     vaultState.shareMint,
   );
   const recipientStealthAccount = await ensureAta(
-    transaction,
+    transferTx,
     connection,
     signer,
     recipient,
     vaultState.shareMint,
   );
 
-  transaction.add(storeProofInstruction);
-  transaction.add(
+  transferTx.add(
     createInstruction(program, 'transfer_with_proof', { amount: amountToArg(amount) }, [
       { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: false },
       { pubkey: registry, isSigner: false, isWritable: false },
@@ -923,7 +933,7 @@ export async function buildTransferTx(params: {
     ]),
   );
 
-  return transaction;
+  return { storeProofTx, transferTx };
 }
 
 export async function buildWithdrawTx(params: {
@@ -934,31 +944,36 @@ export async function buildWithdrawTx(params: {
   publicInputs: number[][];
   shares: BN;
   signer: PublicKey;
-}) {
+}): Promise<{ storeProofTx: Transaction; withdrawTx: Transaction }> {
   const { program, proofA, proofB, proofC, publicInputs, shares, signer } = params;
   const connection = program.provider.connection;
   const vaultState = await fetchVaultState(program);
   const registry = deriveRegistryPda();
   const { proofBuffer, storeProofInstruction, transferRecord } =
     await createVaultProofInstructions(program, signer, proofA, proofB, proofC, publicInputs);
-  const transaction = new Transaction();
+
+  // Transaction 1: Store proof data in buffer PDA
+  const storeProofTx = new Transaction();
+  storeProofTx.add(storeProofInstruction);
+
+  // Transaction 2: Withdraw referencing the proof buffer
+  const withdrawTx = new Transaction();
   const stealthShareAccount = await ensureAta(
-    transaction,
+    withdrawTx,
     connection,
     signer,
     signer,
     vaultState.shareMint,
   );
   const userUsdcAccount = await ensureAta(
-    transaction,
+    withdrawTx,
     connection,
     signer,
     signer,
     vaultState.usdcMint,
   );
 
-  transaction.add(storeProofInstruction);
-  transaction.add(
+  withdrawTx.add(
     createInstruction(program, 'withdraw_with_proof', { amount: amountToArg(shares) }, [
       { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
       { pubkey: registry, isSigner: false, isWritable: false },
@@ -975,7 +990,7 @@ export async function buildWithdrawTx(params: {
     ]),
   );
 
-  return transaction;
+  return { storeProofTx, withdrawTx };
 }
 
 async function fetchTokenBalance(connection: Connection, tokenAccount: PublicKey) {
