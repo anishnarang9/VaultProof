@@ -1,5 +1,6 @@
 import { BN } from '@coral-xyz/anchor';
 import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useCallback, useMemo, useState } from 'react';
 import ProofGenerationModal from '../components/proof/ProofGenerationModal';
 import {
@@ -66,6 +67,7 @@ type StepId =
   | 'accreditation'
   | 'sourceOfFunds'
   | 'amount'
+  | 'walletConnect'
   | 'review'
   | 'proofSubmit';
 
@@ -78,6 +80,7 @@ const STEP_ORDER: StepId[] = [
   'accreditation',
   'sourceOfFunds',
   'amount',
+  'walletConnect',
   'review',
   'proofSubmit',
 ];
@@ -91,6 +94,7 @@ const STEP_TITLES: Record<StepId, string> = {
   accreditation: 'Investor Accreditation',
   sourceOfFunds: 'Source of Funds',
   amount: 'Deposit Amount',
+  walletConnect: 'Connect Wallet',
   review: 'Review & Confirm',
   proofSubmit: 'Generate Proof & Submit',
 };
@@ -146,7 +150,8 @@ export default function Deposit() {
   const { credential, saveCredential } = useCredential();
   const { connection } = useConnection();
   const anchorWallet = useAnchorWallet();
-  const { publicKey, sendTransaction } = useWallet();
+  const { publicKey, sendTransaction, wallet, disconnect, connected } = useWallet();
+  const { setVisible: openWalletModal } = useWalletModal();
   const proofGeneration = useProofGeneration();
 
   const [step, setStep] = useState(0);
@@ -203,6 +208,8 @@ export default function Deposit() {
         return form.sourceOfFunds.trim().length >= 3;
       case 'amount':
         return numericAmount > 0n;
+      case 'walletConnect':
+        return !!publicKey;
       case 'review':
         return true;
       case 'proofSubmit':
@@ -294,7 +301,7 @@ export default function Deposit() {
         proofResult.proof,
         proofResult.publicSignals,
       );
-      const transaction = await buildDepositTx({
+      const { storeProofTx, depositTx } = await buildDepositTx({
         amount: new BN(numericAmount.toString()),
         encryptedMetadata: proofResult.encryptedMetadata,
         program: vusdVault,
@@ -304,7 +311,13 @@ export default function Deposit() {
         publicInputs,
         signer: publicKey,
       });
-      const signature = await sendTransaction(transaction, connection);
+
+      // Transaction 1: Store proof data in buffer PDA
+      const storeSig = await sendTransaction(storeProofTx, connection);
+      await connection.confirmTransaction(storeSig, 'confirmed');
+
+      // Transaction 2: Execute deposit referencing the proof buffer
+      const signature = await sendTransaction(depositTx, connection);
       await connection.confirmTransaction(signature, 'confirmed');
       await refresh();
       toast({
@@ -314,7 +327,9 @@ export default function Deposit() {
       });
       setStatus(`Deposit submitted: ${signature}`);
     } catch (caughtError) {
-      setStatus(caughtError instanceof Error ? caughtError.message : 'Unable to submit deposit.');
+      const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
+      console.error('[VaultProof Deposit]', caughtError);
+      setStatus(`Unable to submit deposit: ${message}`);
     } finally {
       setSubmitting(false);
     }
@@ -539,6 +554,77 @@ export default function Deposit() {
           </div>
         );
 
+      case 'walletConnect':
+        return (
+          <div className="grid gap-4">
+            {connected && publicKey ? (
+              <>
+                <div className="rounded-[var(--radius)] border border-success/30 bg-success/5 px-4 py-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-success/10">
+                      <span className="text-success text-lg">&#10003;</span>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-text-primary">Wallet Connected</p>
+                      <p className="mt-0.5 font-mono text-xs text-text-tertiary">
+                        {publicKey.toBase58().slice(0, 8)}...{publicKey.toBase58().slice(-8)}
+                      </p>
+                    </div>
+                    {wallet?.adapter.icon && (
+                      <img
+                        src={wallet.adapter.icon}
+                        alt={wallet.adapter.name}
+                        className="h-8 w-8 rounded-lg"
+                      />
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => openWalletModal(true)}
+                  >
+                    Switch Wallet
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => disconnect()}
+                  >
+                    Disconnect
+                  </Button>
+                </div>
+                <p className="text-xs text-text-tertiary">
+                  Connected via {wallet?.adapter.name ?? 'unknown wallet'}. Your deposit transaction
+                  will be signed by this wallet.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-6 text-center">
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-elevated">
+                    <span className="text-2xl">&#128274;</span>
+                  </div>
+                  <p className="text-sm font-medium text-text-primary">
+                    Connect a Solana wallet to continue
+                  </p>
+                  <p className="mt-2 text-xs text-text-tertiary">
+                    Supports Phantom, Solflare, Coinbase, Backpack, and any wallet
+                    that implements the Solana Wallet Standard.
+                  </p>
+                  <Button
+                    className="mt-4"
+                    onClick={() => openWalletModal(true)}
+                  >
+                    Select Wallet
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        );
+
       case 'review':
         return (
           <div className="grid gap-4">
@@ -551,6 +637,7 @@ export default function Deposit() {
               { label: 'Accreditation', value: form.accreditation.charAt(0).toUpperCase() + form.accreditation.slice(1), editStep: 5 },
               { label: 'Source of Funds', value: form.sourceOfFunds, editStep: 6 },
               { label: 'Deposit Amount', value: `${Number(form.amount).toLocaleString()} USDC`, editStep: 7 },
+              { label: 'Wallet', value: publicKey ? `${publicKey.toBase58().slice(0, 8)}...${publicKey.toBase58().slice(-8)}` : 'Not connected', editStep: 8 },
             ].map((row) => (
               <div
                 key={row.label}
@@ -642,11 +729,13 @@ export default function Deposit() {
           </div>
           <CardTitle className="mt-3">{STEP_TITLES[currentStepId]}</CardTitle>
           <CardDescription>
-            {currentStepId === 'review'
-              ? 'Review your information before generating the compliance proof.'
-              : currentStepId === 'proofSubmit'
-                ? 'Generate a zero-knowledge proof and submit your deposit on-chain.'
-                : 'Complete each step to build your compliance credential and deposit.'}
+            {currentStepId === 'walletConnect'
+              ? 'Connect the Solana wallet you want to deposit from.'
+              : currentStepId === 'review'
+                ? 'Review your information before generating the compliance proof.'
+                : currentStepId === 'proofSubmit'
+                  ? 'Generate a zero-knowledge proof and submit your deposit on-chain.'
+                  : 'Complete each step to build your compliance credential and deposit.'}
           </CardDescription>
 
           {/* Progress bar */}
@@ -685,6 +774,10 @@ export default function Deposit() {
                 disabled={!publicKey || submitting || numericAmount === 0n}
               >
                 {submitting ? 'Generating...' : 'Generate Proof & Deposit'}
+              </Button>
+            ) : currentStepId === 'walletConnect' ? (
+              <Button onClick={goNext} disabled={!connected}>
+                {connected ? 'Continue' : 'Connect a Wallet Above'}
               </Button>
             ) : (
               <Button onClick={goNext} disabled={!canAdvance}>

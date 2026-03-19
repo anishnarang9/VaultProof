@@ -5,7 +5,7 @@ import {
   bigintToBytes,
   bytesToBigInt,
   countryCodeToNumeric,
-  randomFieldElement,
+  randomElgamalScalar,
   walletBytesToField,
 } from './crypto';
 
@@ -75,15 +75,38 @@ function buildMetadataFields(payload: CompliancePayload, options: ComplianceEncr
 
 async function resolveRegulatorPoint(regulatorKey?: RegulatorKey) {
   const context = await getEncryptionContext();
+  const defaultPoint = context.babyJub.mulPointEscalar(context.base8, DEFAULT_REGULATOR_PRIVATE_KEY);
 
   if (isZeroKey(regulatorKey)) {
-    return context.babyJub.mulPointEscalar(context.base8, DEFAULT_REGULATOR_PRIVATE_KEY);
+    return defaultPoint;
   }
 
-  return [
-    context.field.e(bytesToBigInt(regulatorKey?.x ?? [])),
-    context.field.e(bytesToBigInt(regulatorKey?.y ?? [])),
-  ] as [unknown, unknown];
+  // Validate the on-chain key is a valid BabyJubjub point.
+  // If not (e.g. placeholder bytes from vault init), fall back to default.
+  try {
+    const x = context.field.e(bytesToBigInt(regulatorKey!.x));
+    const y = context.field.e(bytesToBigInt(regulatorKey!.y));
+    const point = [x, y] as [unknown, unknown];
+
+    // Check the point satisfies the BabyJubjub curve equation:
+    // a*x^2 + y^2 = 1 + d*x^2*y^2
+    const F = context.field;
+    const a = F.e(168700n);
+    const d = F.e(168696n);
+    const x2 = F.mul(x, x);
+    const y2 = F.mul(y, y);
+    const lhs = F.add(F.mul(a, x2), y2);
+    const rhs = F.add(F.one, F.mul(d, F.mul(x2, y2)));
+
+    if (!F.eq(lhs, rhs)) {
+      console.warn('[VaultProof] On-chain regulator key is not a valid BabyJubjub point, using default');
+      return defaultPoint;
+    }
+
+    return point;
+  } catch {
+    return defaultPoint;
+  }
 }
 
 export async function buildComplianceEncryptionBundle(
@@ -91,7 +114,8 @@ export async function buildComplianceEncryptionBundle(
   options: ComplianceEncryptionOptions = {},
 ): Promise<ComplianceEncryptionBundle> {
   const context = await getEncryptionContext();
-  const randomness = options.randomness ?? randomFieldElement();
+  const randomness = options.randomness ?? randomElgamalScalar();
+  console.log('[VaultProof ElGamal] randomness bits:', randomness.toString(2).length, '(must be <= 253)');
   const regulatorPoint = await resolveRegulatorPoint(options.regulatorKey);
   const metadataFields = buildMetadataFields(payload, options);
 
