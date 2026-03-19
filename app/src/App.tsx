@@ -108,7 +108,7 @@ function App() {
 
   return (
     <ConnectionProvider endpoint={endpoint}>
-      <WalletProvider autoConnect={!!E2E_WALLET_SECRET} wallets={wallets}>
+      <WalletProvider autoConnect wallets={wallets}>
         <WalletModalProvider>
           <BrowserRouter>
             <AppShell />
