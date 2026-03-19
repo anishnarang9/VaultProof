@@ -108,6 +108,8 @@ const vaultProgramIdl = {
       accounts: [
         { name: 'vault_state', writable: true },
         { name: 'kyc_registry' },
+        { name: 'risk_oracle' },
+        { name: 'address_risk_score', optional: true },
         { name: 'usdc_mint', writable: true },
         { name: 'share_mint', writable: true },
         { name: 'user_usdc_account', writable: true },
@@ -119,7 +121,10 @@ const vaultProgramIdl = {
         { name: 'system_program', address: SystemProgram.programId.toBase58() },
         { name: 'token_program' },
       ],
-      args: [{ name: 'amount', type: 'u64' }],
+      args: [
+        { name: 'amount', type: 'u64' },
+        { name: 'mandate_id', type: { array: ['u8', 32] } },
+      ],
     },
     {
       name: 'transfer_with_proof',
@@ -127,6 +132,8 @@ const vaultProgramIdl = {
       accounts: [
         { name: 'vault_state' },
         { name: 'kyc_registry' },
+        { name: 'risk_oracle' },
+        { name: 'address_risk_score', optional: true },
         { name: 'share_mint' },
         { name: 'sender_stealth_account', writable: true },
         { name: 'recipient_stealth_account', writable: true },
@@ -136,7 +143,10 @@ const vaultProgramIdl = {
         { name: 'system_program', address: SystemProgram.programId.toBase58() },
         { name: 'token_program' },
       ],
-      args: [{ name: 'amount', type: 'u64' }],
+      args: [
+        { name: 'amount', type: 'u64' },
+        { name: 'mandate_id', type: { array: ['u8', 32] } },
+      ],
     },
     {
       name: 'withdraw_with_proof',
@@ -144,6 +154,8 @@ const vaultProgramIdl = {
       accounts: [
         { name: 'vault_state', writable: true },
         { name: 'kyc_registry' },
+        { name: 'risk_oracle' },
+        { name: 'address_risk_score', optional: true },
         { name: 'usdc_mint' },
         { name: 'share_mint', writable: true },
         { name: 'usdc_reserve', writable: true },
@@ -155,7 +167,10 @@ const vaultProgramIdl = {
         { name: 'system_program', address: SystemProgram.programId.toBase58() },
         { name: 'token_program' },
       ],
-      args: [{ name: 'amount', type: 'u64' }],
+      args: [
+        { name: 'amount', type: 'u64' },
+        { name: 'mandate_id', type: { array: ['u8', 32] } },
+      ],
     },
     {
       name: 'request_emergency_withdrawal',
