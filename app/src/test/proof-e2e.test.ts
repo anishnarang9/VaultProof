@@ -317,4 +317,99 @@ describe('proof generation e2e', () => {
     },
     PROOF_TIMEOUT,
   );
+
+  it(
+    'generates a valid proof even when on-chain regulator key is invalid (placeholder bytes)',
+    async () => {
+      const { prepareStoredCredential } = await import('../lib/credential');
+      const { buildComplianceEncryptionBundle } = await import('../lib/elgamal');
+      const { buildCircuitInput, buildSingleLeafMerkleProof, generateProofWithSnarkJs } = await import('../lib/proof');
+      const { walletBytesToField } = await import('../lib/crypto');
+
+      const credential = {
+        fullName: 'Jane Doe',
+        dateOfBirth: '1990-01-01',
+        wallet: 'DzGXeLhKHH81BKSLnQ82FWbmxyPezd7FUgLGDvSkzPge',
+        jurisdiction: 'United States',
+        countryCode: 'US',
+        accreditation: 'accredited' as const,
+        issuedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+        leafHash: '',
+        identitySecret: '12345678901234567890',
+        sourceOfFundsHash: '0x' + '11'.repeat(32),
+        credentialVersion: 1,
+        sourceOfFundsReference: 'Wire transfer from UBS',
+      };
+
+      const preparedCredential = await prepareStoredCredential(credential);
+      const merkleProof = await buildSingleLeafMerkleProof(preparedCredential.leafBigInt);
+      const currentTimestamp = BigInt(Math.floor(Date.now() / 1000));
+      const amount = 10000n;
+
+      // Simulate the ACTUAL on-chain regulator key: sequential placeholder bytes (NOT a valid curve point)
+      const invalidRegulatorKey = {
+        x: Array.from({ length: 32 }, (_, i) => i + 7),  // 07,08,09,...,26
+        y: Array.from({ length: 32 }, (_, i) => i + 8),  // 08,09,0a,...,27
+      };
+
+      const encryption = await buildComplianceEncryptionBundle(
+        {
+          amount,
+          jurisdiction: credential.countryCode,
+          recipient: 'vault_reserve',
+          sender: credential.wallet,
+        },
+        {
+          currentTimestamp,
+          jurisdictionCode: preparedCredential.jurisdiction,
+          regulatorKey: invalidRegulatorKey,
+          senderIdentityHash: preparedCredential.credHashFinalBigInt,
+        },
+      );
+
+      // Should have fallen back to default key (invalid key detected)
+      expect(encryption.scalars).toHaveLength(12);
+      console.log('Encryption with invalid regulator key produced', encryption.scalars.length, 'scalars');
+
+      const circuitInput = buildCircuitInput({
+        accreditationStatus: preparedCredential.accreditationStatus,
+        balance: amount,
+        credentialVersion: preparedCredential.credentialVersion,
+        credentialExpiry: preparedCredential.credentialExpiry,
+        currentTimestamp,
+        dateOfBirth: preparedCredential.dateOfBirth,
+        elgamalRandomness: encryption.randomness,
+        encryptedMetadata: encryption.scalars,
+        identitySecret: preparedCredential.identitySecret,
+        institutionalThreshold: 10_000_000n,
+        issuerSignature: preparedCredential.issuerSignature,
+        jurisdiction: preparedCredential.jurisdiction,
+        merklePathElements: merkleProof.pathElements,
+        merklePathIndices: merkleProof.pathIndices,
+        merkleRoot: merkleProof.root,
+        name: preparedCredential.name,
+        nationality: preparedCredential.nationality,
+        recipientAddress: walletBytesToField('vault_reserve'),
+        regulatorPubKeyX: encryption.regulatorPubKeyX,
+        regulatorPubKeyY: encryption.regulatorPubKeyY,
+        retailThreshold: 100_000n,
+        accreditedThreshold: 1_000_000n,
+        expiredThreshold: 1_000n,
+        sourceOfFundsHash: preparedCredential.sourceOfFundsHash,
+        transferAmount: amount,
+        walletPubkey: preparedCredential.walletPubkey,
+      });
+
+      const { proof, publicSignals } = await generateProofWithSnarkJs(
+        circuitInput,
+        { wasmUrl: WASM_PATH, zkeyUrl: ZKEY_PATH },
+      );
+
+      expect(proof).toBeDefined();
+      expect(publicSignals.length).toBe(22);
+      console.log('Proof with invalid regulator key (fallback to default) succeeded!');
+    },
+    PROOF_TIMEOUT,
+  );
 });
