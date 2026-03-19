@@ -590,6 +590,13 @@ export default function Deposit() {
       case 'proofSubmit':
         return (
           <div className="grid gap-4">
+            {!publicKey && (
+              <Alert
+                title="Wallet not connected"
+                description="Connect your Solana wallet using the button in the top navigation bar before generating a proof."
+                variant="destructive"
+              />
+            )}
             <div className="rounded-[var(--radius)] border border-border bg-bg-primary px-4 py-4">
               <p className="text-sm text-text-secondary">
                 Clicking below will generate a Groth16 zero-knowledge proof in your browser. Your
@@ -683,12 +690,21 @@ export default function Deposit() {
               <Button
                 onClick={handleProofAndSubmit}
                 disabled={!publicKey || submitting || numericAmount === 0n}
+                className={!publicKey ? 'opacity-40 cursor-not-allowed' : ''}
               >
-                {submitting ? 'Generating...' : 'Generate Proof & Deposit'}
+                {!publicKey
+                  ? 'Connect Wallet First'
+                  : submitting
+                    ? 'Generating...'
+                    : 'Generate Proof & Deposit'}
               </Button>
             ) : (
-              <Button onClick={goNext} disabled={!canAdvance}>
-                {currentStepId === 'review' ? 'Proceed to Proof' : 'Continue'}
+              <Button onClick={goNext} disabled={!canAdvance || (currentStepId === 'review' && !publicKey)}>
+                {currentStepId === 'review' && !publicKey
+                  ? 'Connect Wallet to Continue'
+                  : currentStepId === 'review'
+                    ? 'Proceed to Proof'
+                    : 'Continue'}
               </Button>
             )}
           </div>
