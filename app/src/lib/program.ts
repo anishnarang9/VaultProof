@@ -28,6 +28,25 @@ export const COMPLIANCE_ADMIN_PROGRAM_ID = new PublicKey(
   'rcSKMdzuL7LLuTh322WXWiteSbqVPe5cR2hGDCNWtu4',
 );
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+
+/** Groth16 on-chain verification requires ~1.4M compute units (default is 200K). */
+const PROOF_VERIFY_COMPUTE_UNITS = 1_400_000;
+const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey('ComputeBudget111111111111111111111111111111');
+
+/** Build a SetComputeUnitLimit instruction without ComputeBudgetProgram (avoids Buffer polyfill issues). */
+function computeUnitLimitIx(units: number): TransactionInstruction {
+  const data = new Uint8Array(5);
+  data[0] = 2; // SetComputeUnitLimit instruction index
+  data[1] = units & 0xff;
+  data[2] = (units >> 8) & 0xff;
+  data[3] = (units >> 16) & 0xff;
+  data[4] = (units >> 24) & 0xff;
+  return new TransactionInstruction({
+    keys: [],
+    programId: COMPUTE_BUDGET_PROGRAM_ID,
+    data: data as unknown as globalThis.Buffer,
+  });
+}
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
   'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
 );
@@ -848,6 +867,7 @@ export async function buildDepositTx(params: {
 
   // Transaction 2: Deposit referencing the proof buffer
   const depositTx = new Transaction();
+  depositTx.add(computeUnitLimitIx(PROOF_VERIFY_COMPUTE_UNITS));
   const userUsdcAccount = await ensureAta(
     depositTx,
     connection,
@@ -915,6 +935,7 @@ export async function buildTransferTx(params: {
 
   // Transaction 2: Transfer referencing the proof buffer
   const transferTx = new Transaction();
+  transferTx.add(computeUnitLimitIx(PROOF_VERIFY_COMPUTE_UNITS));
   const senderStealthAccount = await ensureAta(
     transferTx,
     connection,
@@ -978,6 +999,7 @@ export async function buildWithdrawTx(params: {
 
   // Transaction 2: Withdraw referencing the proof buffer
   const withdrawTx = new Transaction();
+  withdrawTx.add(computeUnitLimitIx(PROOF_VERIFY_COMPUTE_UNITS));
   const stealthShareAccount = await ensureAta(
     withdrawTx,
     connection,
