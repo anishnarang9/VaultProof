@@ -87,9 +87,16 @@ vi.mock('@solana/wallet-adapter-react', () => ({
   }),
   useConnection: () => ({ connection: mockState.connection }),
   useWallet: () => ({
+    connected: true,
+    disconnect: vi.fn(),
     publicKey: authorityKey(),
     sendTransaction: mockState.sendTransaction,
+    wallet: { adapter: { name: 'Phantom', icon: 'https://phantom.app/icon.png' } },
   }),
+}));
+
+vi.mock('@solana/wallet-adapter-react-ui', () => ({
+  useWalletModal: () => ({ setVisible: vi.fn() }),
 }));
 
 vi.mock('../hooks/useCredential', () => ({
@@ -263,13 +270,18 @@ describe('frontend transaction pages', () => {
     await user.type(screen.getByLabelText(/deposit amount/i), '25000');
     await user.click(screen.getByRole('button', { name: /continue/i }));
 
-    // Step 9: Review
+    // Step 9: Connect Wallet
+    expect(screen.getByRole('heading', { name: /connect wallet/i })).toBeInTheDocument();
+    expect(screen.getByText(/wallet connected/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Step 10: Review
     expect(screen.getByRole('heading', { name: /review & confirm/i })).toBeInTheDocument();
     expect(screen.getByText('Jane Doe')).toBeInTheDocument();
     expect(screen.getByText(/25,000 USDC/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /proceed to proof/i }));
 
-    // Step 10: Proof & Submit
+    // Step 11: Proof & Submit
     expect(screen.getByRole('heading', { name: /generate proof & submit/i })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /generate proof & deposit/i }));
 
