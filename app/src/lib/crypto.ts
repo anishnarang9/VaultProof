@@ -124,3 +124,13 @@ export function randomFieldElement() {
   const candidate = bytesToBigInt(bytes) % BN254_FIELD;
   return candidate === 0n ? 1n : candidate;
 }
+
+/** ElGamal randomness must fit in 253 bits (circuit uses Num2Bits(253)). */
+const MAX_253 = (1n << 253n) - 1n;
+
+export function randomElgamalScalar(): bigint {
+  const bytes = new Uint8Array(32);
+  getCrypto().getRandomValues(bytes);
+  const candidate = bytesToBigInt(bytes) & MAX_253;
+  return candidate === 0n ? 1n : candidate;
+}
