@@ -327,7 +327,9 @@ export default function Deposit() {
       });
       setStatus(`Deposit submitted: ${signature}`);
     } catch (caughtError) {
-      setStatus(caughtError instanceof Error ? caughtError.message : 'Unable to submit deposit.');
+      const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
+      console.error('[VaultProof Deposit]', caughtError);
+      setStatus(`Unable to submit deposit: ${message}`);
     } finally {
       setSubmitting(false);
     }

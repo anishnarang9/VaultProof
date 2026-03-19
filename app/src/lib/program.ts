@@ -545,6 +545,10 @@ export function deriveUsdcReservePda() {
   return derivePda(VUSD_VAULT_PROGRAM_ID, 'usdc_reserve');
 }
 
+export function deriveRiskOraclePda() {
+  return derivePda(VUSD_VAULT_PROGRAM_ID, 'risk_oracle', deriveVaultStatePda());
+}
+
 export function deriveProofBufferPda(owner: PublicKey) {
   return derivePda(VUSD_VAULT_PROGRAM_ID, 'proof_buffer', owner);
 }
@@ -860,20 +864,28 @@ export async function buildDepositTx(params: {
   );
 
   depositTx.add(
-    createInstruction(program, 'deposit_with_proof', { amount: amountToArg(amount) }, [
-      { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
-      { pubkey: registry, isSigner: false, isWritable: false },
-      { pubkey: vaultState.usdcMint, isSigner: false, isWritable: true },
-      { pubkey: vaultState.shareMint, isSigner: false, isWritable: true },
-      { pubkey: userUsdcAccount, isSigner: false, isWritable: true },
-      { pubkey: vaultState.usdcReserve, isSigner: false, isWritable: true },
-      { pubkey: stealthShareAccount, isSigner: false, isWritable: true },
-      { pubkey: proofBuffer, isSigner: false, isWritable: true },
-      { pubkey: transferRecord, isSigner: false, isWritable: true },
-      { pubkey: signer, isSigner: true, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ]),
+    createInstruction(
+      program,
+      'deposit_with_proof',
+      { amount: amountToArg(amount), mandate_id: Array.from({ length: 32 }, () => 0) },
+      [
+        // Account order must match IDL exactly
+        { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
+        { pubkey: registry, isSigner: false, isWritable: false },
+        { pubkey: deriveRiskOraclePda(), isSigner: false, isWritable: false },
+        { pubkey: VUSD_VAULT_PROGRAM_ID, isSigner: false, isWritable: false }, // address_risk_score (optional: None)
+        { pubkey: vaultState.usdcMint, isSigner: false, isWritable: true },
+        { pubkey: vaultState.shareMint, isSigner: false, isWritable: true },
+        { pubkey: userUsdcAccount, isSigner: false, isWritable: true },
+        { pubkey: vaultState.usdcReserve, isSigner: false, isWritable: true },
+        { pubkey: stealthShareAccount, isSigner: false, isWritable: true },
+        { pubkey: proofBuffer, isSigner: false, isWritable: true },
+        { pubkey: transferRecord, isSigner: false, isWritable: true },
+        { pubkey: signer, isSigner: true, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      ],
+    ),
   );
 
   return { storeProofTx, depositTx };
@@ -919,18 +931,26 @@ export async function buildTransferTx(params: {
   );
 
   transferTx.add(
-    createInstruction(program, 'transfer_with_proof', { amount: amountToArg(amount) }, [
-      { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: false },
-      { pubkey: registry, isSigner: false, isWritable: false },
-      { pubkey: vaultState.shareMint, isSigner: false, isWritable: false },
-      { pubkey: senderStealthAccount, isSigner: false, isWritable: true },
-      { pubkey: recipientStealthAccount, isSigner: false, isWritable: true },
-      { pubkey: proofBuffer, isSigner: false, isWritable: true },
-      { pubkey: transferRecord, isSigner: false, isWritable: true },
-      { pubkey: signer, isSigner: true, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ]),
+    createInstruction(
+      program,
+      'transfer_with_proof',
+      { amount: amountToArg(amount), mandate_id: Array.from({ length: 32 }, () => 0) },
+      [
+        // Account order must match IDL exactly
+        { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: false },
+        { pubkey: registry, isSigner: false, isWritable: false },
+        { pubkey: deriveRiskOraclePda(), isSigner: false, isWritable: false },
+        { pubkey: VUSD_VAULT_PROGRAM_ID, isSigner: false, isWritable: false }, // address_risk_score (optional: None)
+        { pubkey: vaultState.shareMint, isSigner: false, isWritable: false },
+        { pubkey: senderStealthAccount, isSigner: false, isWritable: true },
+        { pubkey: recipientStealthAccount, isSigner: false, isWritable: true },
+        { pubkey: proofBuffer, isSigner: false, isWritable: true },
+        { pubkey: transferRecord, isSigner: false, isWritable: true },
+        { pubkey: signer, isSigner: true, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      ],
+    ),
   );
 
   return { storeProofTx, transferTx };
@@ -974,20 +994,28 @@ export async function buildWithdrawTx(params: {
   );
 
   withdrawTx.add(
-    createInstruction(program, 'withdraw_with_proof', { amount: amountToArg(shares) }, [
-      { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
-      { pubkey: registry, isSigner: false, isWritable: false },
-      { pubkey: vaultState.usdcMint, isSigner: false, isWritable: false },
-      { pubkey: vaultState.shareMint, isSigner: false, isWritable: true },
-      { pubkey: vaultState.usdcReserve, isSigner: false, isWritable: true },
-      { pubkey: stealthShareAccount, isSigner: false, isWritable: true },
-      { pubkey: userUsdcAccount, isSigner: false, isWritable: true },
-      { pubkey: proofBuffer, isSigner: false, isWritable: true },
-      { pubkey: transferRecord, isSigner: false, isWritable: true },
-      { pubkey: signer, isSigner: true, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    ]),
+    createInstruction(
+      program,
+      'withdraw_with_proof',
+      { amount: amountToArg(shares), mandate_id: Array.from({ length: 32 }, () => 0) },
+      [
+        // Account order must match IDL exactly
+        { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
+        { pubkey: registry, isSigner: false, isWritable: false },
+        { pubkey: deriveRiskOraclePda(), isSigner: false, isWritable: false },
+        { pubkey: VUSD_VAULT_PROGRAM_ID, isSigner: false, isWritable: false }, // address_risk_score (optional: None)
+        { pubkey: vaultState.usdcMint, isSigner: false, isWritable: false },
+        { pubkey: vaultState.shareMint, isSigner: false, isWritable: true },
+        { pubkey: vaultState.usdcReserve, isSigner: false, isWritable: true },
+        { pubkey: stealthShareAccount, isSigner: false, isWritable: true },
+        { pubkey: userUsdcAccount, isSigner: false, isWritable: true },
+        { pubkey: proofBuffer, isSigner: false, isWritable: true },
+        { pubkey: transferRecord, isSigner: false, isWritable: true },
+        { pubkey: signer, isSigner: true, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      ],
+    ),
   );
 
   return { storeProofTx, withdrawTx };
