@@ -5,7 +5,7 @@ import {
   bigintToBytes,
   bytesToBigInt,
   countryCodeToNumeric,
-  randomFieldElement,
+  randomElgamalScalar,
   walletBytesToField,
 } from './crypto';
 
@@ -91,7 +91,7 @@ export async function buildComplianceEncryptionBundle(
   options: ComplianceEncryptionOptions = {},
 ): Promise<ComplianceEncryptionBundle> {
   const context = await getEncryptionContext();
-  const randomness = options.randomness ?? randomFieldElement();
+  const randomness = options.randomness ?? randomElgamalScalar();
   const regulatorPoint = await resolveRegulatorPoint(options.regulatorKey);
   const metadataFields = buildMetadataFields(payload, options);
 
