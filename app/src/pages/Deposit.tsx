@@ -301,24 +301,48 @@ export default function Deposit() {
         proofResult.proof,
         proofResult.publicSignals,
       );
-      const { storeProofTx, depositTx } = await buildDepositTx({
-        amount: new BN(numericAmount.toString()),
-        encryptedMetadata: proofResult.encryptedMetadata,
-        program: vusdVault,
-        proofA,
-        proofB,
-        proofC,
-        publicInputs,
-        signer: publicKey,
-      });
+      console.log('[VaultProof Deposit] proofA length:', proofA.length, 'proofB length:', proofB.length, 'proofC length:', proofC.length, 'publicInputs length:', publicInputs.length);
+      console.log('[VaultProof Deposit] amount:', numericAmount.toString(), 'signer:', publicKey.toBase58());
+
+      let storeProofTx: Transaction;
+      let depositTx: Transaction;
+      try {
+        const result = await buildDepositTx({
+          amount: new BN(numericAmount.toString()),
+          encryptedMetadata: proofResult.encryptedMetadata,
+          program: vusdVault,
+          proofA,
+          proofB,
+          proofC,
+          publicInputs,
+          signer: publicKey,
+        });
+        storeProofTx = result.storeProofTx;
+        depositTx = result.depositTx;
+      } catch (buildErr) {
+        console.error('[VaultProof Deposit] buildDepositTx failed:', buildErr);
+        throw buildErr;
+      }
 
       // Transaction 1: Store proof data in buffer PDA
+      console.log('[VaultProof Deposit] Sending Tx1 (store_proof_data)...');
       const storeSig = await sendTransaction(storeProofTx, connection);
+      console.log('[VaultProof Deposit] Tx1 confirmed:', storeSig);
       await connection.confirmTransaction(storeSig, 'confirmed');
 
       // Transaction 2: Execute deposit referencing the proof buffer
-      const signature = await sendTransaction(depositTx, connection);
-      await connection.confirmTransaction(signature, 'confirmed');
+      // Skip preflight so the tx reaches the validator — on failure we fetch logs
+      const signature = await sendTransaction(depositTx, connection, { skipPreflight: true });
+      console.log('[VaultProof Deposit] Tx2 sent:', signature);
+      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+      if (confirmation.value.err) {
+        // Fetch the actual transaction to get program logs
+        const txDetails = await connection.getTransaction(signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
+        const logs = txDetails?.meta?.logMessages ?? [];
+        console.error('[VaultProof Deposit] On-chain error:', JSON.stringify(confirmation.value.err));
+        console.error('[VaultProof Deposit] Program logs:', logs);
+        throw new Error(`Deposit failed on-chain: ${logs.filter((l: string) => l.includes('Error') || l.includes('failed')).join(' | ') || JSON.stringify(confirmation.value.err)}`);
+      }
       await refresh();
       toast({
         description: signature,
