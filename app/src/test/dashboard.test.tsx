@@ -58,4 +58,10 @@ describe('Dashboard', () => {
     expect(screen.getByText('82%')).toBeInTheDocument();
     expect(screen.getByTestId('circuit-breaker-bar')).toHaveClass('bg-warning');
   });
+
+  it('shows a clean empty state when there are no transactions', () => {
+    render(<Dashboard />);
+
+    expect(screen.getAllByText('No transactions yet.')).toHaveLength(2);
+  });
 });

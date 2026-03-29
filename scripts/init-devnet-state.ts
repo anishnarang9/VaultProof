@@ -1,9 +1,9 @@
 import * as anchor from "@coral-xyz/anchor";
 import {
+  existsSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
-  existsSync,
 } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -12,40 +12,29 @@ import {
   PublicKey,
   SystemProgram,
   TransactionMessage,
+  VersionedTransaction,
 } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID, createMint } from "@solana/spl-token";
 
 import { buildDevnetCredential } from "./devnet-credential";
 import {
-  airdropIfNeeded,
-  createApproveExecuteVaultTransaction,
-  createSquadsMultisig,
-  SQUADS_PROGRAM_ID,
-  transferLamports,
-  type SquadsContext,
-} from "./squads";
+  createAccountsCoderFromIdl,
+  createProgramFromIdl,
+  decodeAccountData,
+  decodeMatchingProgramAccounts,
+  ensureRequiredIdlArtifacts,
+  resolveDevnetBootstrapPlan,
+} from "./devnet-bootstrap-helpers";
+import { initializeDevnetVault } from "./init-vault-devnet";
 
 const ROOT = resolve(__dirname, "..");
 const OUTPUT_DIR = resolve(ROOT, "target", "devnet");
 const STATE_TREE_DEPTH = 20;
-const TEST_YIELD_VENUE = Keypair.fromSeed(Uint8Array.from(Array(32).fill(9))).publicKey;
-const USDC_DECIMALS = 1_000_000n;
-const RISK_LIMITS = {
-  circuitBreakerThreshold: 100_000n * USDC_DECIMALS,
-  maxSingleDeposit: 50_000n * USDC_DECIMALS,
-  maxSingleTransaction: 50_000n * USDC_DECIMALS,
-  maxDailyTransactions: 100,
-};
 
 type SparseLeaf = {
   active: boolean;
   hash: Buffer;
   index: number;
 };
-
-function bn(value: bigint | number) {
-  return new anchor.BN(value.toString());
-}
 
 function bigIntToBuffer(value: bigint) {
   return Buffer.from(value.toString(16).padStart(64, "0"), "hex");
@@ -63,13 +52,26 @@ function fromHex(value: string) {
   return Buffer.from(value, "hex");
 }
 
-function bytes32Sequence(offset: number) {
-  return Array.from({ length: 32 }, (_, index) => (index + offset) & 0xff);
-}
-
 function loadIdl(name: string) {
   const idlPath = resolve(ROOT, "target", "idl", `${name}.json`);
   return JSON.parse(readFileSync(idlPath, "utf8"));
+}
+
+async function fetchDecodedAccount<T>(
+  connection: anchor.web3.Connection,
+  coder: {
+    decode: (accountName: string, data: Buffer) => T;
+  },
+  accountName: string,
+  address: PublicKey,
+) {
+  const info = await connection.getAccountInfo(address, "confirmed");
+
+  if (!info) {
+    throw new Error(`Account ${address.toBase58()} was not found.`);
+  }
+
+  return decodeAccountData(coder, accountName, info.data);
 }
 
 function providerPayer(provider: anchor.AnchorProvider) {
@@ -91,6 +93,53 @@ function loadOrCreateKeypair(path: string) {
   return keypair;
 }
 
+async function confirmSignature(
+  connection: anchor.web3.Connection,
+  signature: string,
+) {
+  const latest = await connection.getLatestBlockhash("confirmed");
+  await connection.confirmTransaction(
+    {
+      blockhash: latest.blockhash,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
+      signature,
+    },
+    "confirmed",
+  );
+}
+
+async function transferLamports(
+  connection: anchor.web3.Connection,
+  payer: Keypair,
+  recipient: PublicKey,
+  lamports: number,
+) {
+  const latest = await connection.getLatestBlockhash("confirmed");
+  const message = new TransactionMessage({
+    payerKey: payer.publicKey,
+    recentBlockhash: latest.blockhash,
+    instructions: [
+      SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        lamports,
+        toPubkey: recipient,
+      }),
+    ],
+  }).compileToV0Message();
+  const transaction = new VersionedTransaction(message);
+  transaction.sign([payer]);
+
+  const signature = await connection.sendTransaction(transaction);
+  await connection.confirmTransaction(
+    {
+      blockhash: latest.blockhash,
+      lastValidBlockHeight: latest.lastValidBlockHeight,
+      signature,
+    },
+    "confirmed",
+  );
+}
+
 async function fundFromPayerIfNeeded(
   connection: anchor.web3.Connection,
   payer: Keypair,
@@ -99,6 +148,12 @@ async function fundFromPayerIfNeeded(
 ) {
   const balance = await connection.getBalance(recipient, "confirmed");
   if (balance >= minimumLamports) {
+    return;
+  }
+
+  if (recipient.equals(payer.publicKey)) {
+    const signature = await connection.requestAirdrop(recipient, minimumLamports * 2);
+    await confirmSignature(connection, signature);
     return;
   }
 
@@ -197,8 +252,8 @@ function getProofForIndex(
 
 async function ensureRegistry(provider: anchor.AnchorProvider) {
   const idl = loadIdl("kyc_registry");
-  const program = new anchor.Program(idl, provider);
-  const programAccounts = program.account as any;
+  const program = createProgramFromIdl<anchor.Program<any>>(anchor, idl, provider);
+  const accountsCoder = createAccountsCoderFromIdl<anchor.BorshAccountsCoder>(anchor, idl);
 
   const [registryPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("kyc_registry")],
@@ -227,266 +282,17 @@ async function ensureRegistry(provider: anchor.AnchorProvider) {
   }
 
   return {
+    accountsCoder,
     program,
-    programAccounts,
     registryPda,
     stateTreePda,
   };
 }
 
-function deriveYieldVenuePda(programId: PublicKey, vaultStatePda: PublicKey, venue: PublicKey) {
-  return PublicKey.findProgramAddressSync(
-    [Buffer.from("yield_venue"), vaultStatePda.toBuffer(), venue.toBuffer()],
-    programId,
-  );
-}
-
-async function loadOrCreateSquadsContext(
-  provider: anchor.AnchorProvider,
-  payer: Keypair,
-): Promise<SquadsContext> {
-  mkdirSync(OUTPUT_DIR, { recursive: true });
-
-  const memberPaths = [1, 2, 3].map((index) =>
-    resolve(OUTPUT_DIR, `squads-member-${index}.json`),
-  );
-  const members = memberPaths.map((path) => loadOrCreateKeypair(path)) as [
-    Keypair,
-    Keypair,
-    Keypair,
-  ];
-  const contextPath = resolve(OUTPUT_DIR, "squads-context.json");
-
-  await airdropIfNeeded(provider.connection, payer.publicKey, 2 * LAMPORTS_PER_SOL);
-  for (const member of members) {
-    await fundFromPayerIfNeeded(provider.connection, payer, member.publicKey);
-  }
-
-  if (existsSync(contextPath)) {
-    const persisted = JSON.parse(readFileSync(contextPath, "utf8"));
-    const multisigPda = new PublicKey(persisted.multisigPda);
-    const vaultPda = new PublicKey(persisted.vaultPda);
-    const accountInfo = await provider.connection.getAccountInfo(multisigPda, "confirmed");
-
-    if (accountInfo) {
-      return {
-        createKey: loadOrCreateKeypair(resolve(OUTPUT_DIR, "squads-create-key.json")),
-        members,
-        multisigPda,
-        programId: new PublicKey(persisted.programId),
-        threshold: persisted.threshold,
-        vaultIndex: persisted.vaultIndex,
-        vaultPda,
-      };
-    }
-  }
-
-  const squads = await createSquadsMultisig(provider.connection, members, 2, SQUADS_PROGRAM_ID);
-  await fundFromPayerIfNeeded(provider.connection, payer, squads.vaultPda, 2 * LAMPORTS_PER_SOL);
-  writeFileSync(
-    resolve(OUTPUT_DIR, "squads-create-key.json"),
-    JSON.stringify(Array.from(squads.createKey.secretKey)),
-  );
-  writeFileSync(
-    contextPath,
-    JSON.stringify(
-      {
-        members: squads.members.map((member) => member.publicKey.toBase58()),
-        multisigPda: squads.multisigPda.toBase58(),
-        programId: squads.programId.toBase58(),
-        threshold: squads.threshold,
-        vaultIndex: squads.vaultIndex,
-        vaultPda: squads.vaultPda.toBase58(),
-      },
-      null,
-      2,
-    ),
-  );
-
-  return squads;
-}
-
-async function buildVaultMessage(
-  connection: anchor.web3.Connection,
-  payerKey: PublicKey,
-  instructions: anchor.web3.TransactionInstruction[],
-) {
-  const { blockhash } = await connection.getLatestBlockhash("confirmed");
-  return new TransactionMessage({
-    payerKey,
-    recentBlockhash: blockhash,
-    instructions,
-  });
-}
-
-async function ensureVaultViaSquads(
-  provider: anchor.AnchorProvider,
-  payer: Keypair,
-  squads: SquadsContext,
-) {
-  const idl = loadIdl("vusd_vault");
-  const vaultProgram = new anchor.Program(idl, provider);
-  const [vaultStatePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("vault_state")],
-    vaultProgram.programId,
-  );
-  const [usdcReservePda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("usdc_reserve")],
-    vaultProgram.programId,
-  );
-  const [yieldVenuePda] = deriveYieldVenuePda(
-    vaultProgram.programId,
-    vaultStatePda,
-    TEST_YIELD_VENUE,
-  );
-
-  let usdcMint = process.env.VAULTPROOF_TEST_USDC_MINT
-    ? new PublicKey(process.env.VAULTPROOF_TEST_USDC_MINT)
-    : undefined;
-  const existingVault = await provider.connection.getAccountInfo(vaultStatePda, "confirmed");
-  if (!existingVault) {
-    if (!usdcMint) {
-      usdcMint = await createMint(
-        provider.connection,
-        payer,
-        payer.publicKey,
-        null,
-        6,
-      );
-    }
-
-    const shareMint = Keypair.generate();
-    const instruction = await (vaultProgram.methods as any)
-      .initializeVault(bytes32Sequence(7), bytes32Sequence(8))
-      .accounts({
-        authority: squads.vaultPda,
-        shareMint: shareMint.publicKey,
-        systemProgram: SystemProgram.programId,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        usdcMint,
-        usdcReserve: usdcReservePda,
-        vaultState: vaultStatePda,
-      })
-      .instruction();
-    const message = await buildVaultMessage(provider.connection, squads.vaultPda, [instruction]);
-
-    await createApproveExecuteVaultTransaction({
-      additionalSigners: [shareMint],
-      approver: squads.members[1],
-      connection: provider.connection,
-      creator: squads.members[0],
-      feePayer: squads.members[0],
-      instructionLabel: "initialize_vault",
-      multisigPda: squads.multisigPda,
-      programId: squads.programId,
-      transactionMessage: message,
-      vaultIndex: squads.vaultIndex,
-    });
-  }
-
-  let vaultState = await (vaultProgram.account as any).vaultState.fetch(vaultStatePda);
-  if (!vaultState.authority.equals(squads.vaultPda)) {
-    throw new Error(
-      `Vault authority ${vaultState.authority.toBase58()} does not match Squads vault ${squads.vaultPda.toBase58()}. Fresh deploy required because the vault program does not expose an authority handoff instruction.`,
-    );
-  }
-
-  usdcMint = new PublicKey(vaultState.usdcMint);
-
-  const riskInstruction = await (vaultProgram.methods as any)
-    .updateRiskLimits(
-      bn(RISK_LIMITS.circuitBreakerThreshold),
-      bn(RISK_LIMITS.maxSingleTransaction),
-      bn(RISK_LIMITS.maxSingleDeposit),
-      RISK_LIMITS.maxDailyTransactions,
-    )
-    .accounts({
-      authority: squads.vaultPda,
-      vaultState: vaultStatePda,
-    })
-    .instruction();
-  await createApproveExecuteVaultTransaction({
-    approver: squads.members[1],
-    connection: provider.connection,
-    creator: squads.members[0],
-    feePayer: squads.members[0],
-    instructionLabel: "update_risk_limits",
-    multisigPda: squads.multisigPda,
-    programId: squads.programId,
-    transactionMessage: await buildVaultMessage(provider.connection, squads.vaultPda, [
-      riskInstruction,
-    ]),
-    vaultIndex: squads.vaultIndex,
-  });
-
-  const custodyInstruction = await (vaultProgram.methods as any)
-    .updateCustodyProvider({ selfCustody: {} }, squads.vaultPda)
-    .accounts({
-      authority: squads.vaultPda,
-      vaultState: vaultStatePda,
-    })
-    .instruction();
-  await createApproveExecuteVaultTransaction({
-    approver: squads.members[1],
-    connection: provider.connection,
-    creator: squads.members[0],
-    feePayer: squads.members[0],
-    instructionLabel: "update_custody_provider",
-    multisigPda: squads.multisigPda,
-    programId: squads.programId,
-    transactionMessage: await buildVaultMessage(provider.connection, squads.vaultPda, [
-      custodyInstruction,
-    ]),
-    vaultIndex: squads.vaultIndex,
-  });
-
-  const existingYieldVenue = await provider.connection.getAccountInfo(yieldVenuePda, "confirmed");
-  if (!existingYieldVenue) {
-    const venueInstruction = await (vaultProgram.methods as any)
-      .addYieldVenue(
-        TEST_YIELD_VENUE,
-        "Kamino Devnet",
-        bytes32Sequence(11),
-        6_500,
-        2,
-      )
-      .accounts({
-        authority: squads.vaultPda,
-        systemProgram: SystemProgram.programId,
-        vaultState: vaultStatePda,
-        yieldVenue: yieldVenuePda,
-      })
-      .instruction();
-    await createApproveExecuteVaultTransaction({
-      approver: squads.members[1],
-      connection: provider.connection,
-      creator: squads.members[0],
-      feePayer: squads.members[0],
-      instructionLabel: "add_yield_venue",
-      multisigPda: squads.multisigPda,
-      programId: squads.programId,
-      transactionMessage: await buildVaultMessage(provider.connection, squads.vaultPda, [
-        venueInstruction,
-      ]),
-      vaultIndex: squads.vaultIndex,
-    });
-  }
-
-  vaultState = await (vaultProgram.account as any).vaultState.fetch(vaultStatePda);
-  return {
-    usdcMint,
-    usdcReservePda,
-    vaultProgram,
-    vaultState,
-    vaultStatePda,
-    yieldVenuePda,
-  };
-}
-
 async function issueCredential(
   provider: anchor.AnchorProvider,
+  registryAccountsCoder: anchor.BorshAccountsCoder,
   registryProgram: anchor.Program<any>,
-  registryAccounts: any,
   registryPda: PublicKey,
   stateTreePda: PublicKey,
 ) {
@@ -517,9 +323,25 @@ async function issueCredential(
 
   if (!existingLeaf) {
     const poseidon = await loadPoseidon();
-    const stateTree = await registryAccounts.stateTree.fetch(stateTreePda);
+    const stateTree = await fetchDecodedAccount<{ nextIndex: number }>(
+      provider.connection,
+      registryAccountsCoder,
+      "StateTree",
+      stateTreePda,
+    );
     const nextIndex = Number(stateTree.nextIndex);
-    const leaves = await registryAccounts.credentialLeaf.all();
+    const leaves = decodeMatchingProgramAccounts<{
+      active: boolean;
+      leafHash: number[] | Uint8Array;
+      leafIndex: number;
+      registry: PublicKey;
+    }>(
+      registryAccountsCoder,
+      "CredentialLeaf",
+      await provider.connection.getProgramAccounts(registryProgram.programId, {
+        commitment: "confirmed",
+      }),
+    );
     const activeLeaves: SparseLeaf[] = leaves
       .filter((entry: any) => entry.account.registry.equals(registryPda))
       .map((entry: any) => ({
@@ -560,31 +382,46 @@ async function main() {
   process.env.ANCHOR_WALLET ??= `${process.env.HOME}/.config/solana/id.json`;
   mkdirSync(OUTPUT_DIR, { recursive: true });
 
+  const bootstrapPlan = resolveDevnetBootstrapPlan(process.env);
+  ensureRequiredIdlArtifacts({
+    programNames: bootstrapPlan.requiredIdlPrograms,
+    rootDir: ROOT,
+  });
+
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
-  const payer = providerPayer(provider);
+  await fundFromPayerIfNeeded(provider.connection, providerPayer(provider), provider.wallet.publicKey);
 
   const registry = await ensureRegistry(provider);
-  const squads = await loadOrCreateSquadsContext(provider, payer);
-  const vault = await ensureVaultViaSquads(provider, payer, squads);
+  const vault = bootstrapPlan.credentialsOnly ? null : await initializeDevnetVault();
   const credential = await issueCredential(
     provider,
+    registry.accountsCoder,
     registry.program,
-    registry.programAccounts,
     registry.registryPda,
     registry.stateTreePda,
   );
-  const stateTree = await registry.programAccounts.stateTree.fetch(registry.stateTreePda);
+  const stateTree = await fetchDecodedAccount<{ root: number[] }>(
+    provider.connection,
+    registry.accountsCoder,
+    "StateTree",
+    registry.stateTreePda,
+  );
 
   console.log("=== VaultProof Devnet State ===");
+  console.log(`Authority: ${provider.wallet.publicKey.toBase58()}`);
+  console.log(`Authority model: ${bootstrapPlan.authorityModel}`);
+  console.log(`Production note: ${bootstrapPlan.authorityModelNote}`);
   console.log(`Registry: ${registry.registryPda.toBase58()}`);
   console.log(`State tree: ${registry.stateTreePda.toBase58()}`);
   console.log(`Merkle root: ${Buffer.from(stateTree.root as number[]).toString("hex")}`);
-  console.log(`Squads multisig: ${squads.multisigPda.toBase58()}`);
-  console.log(`Squads vault PDA: ${squads.vaultPda.toBase58()}`);
-  console.log(`Vault state: ${vault.vaultStatePda.toBase58()}`);
-  console.log(`Vault authority: ${vault.vaultState.authority.toBase58()}`);
-  console.log(`Yield venue: ${vault.yieldVenuePda.toBase58()}`);
+  if (vault) {
+    console.log(`Vault state: ${vault.vaultStatePda.toBase58()}`);
+    console.log(`Vault authority: ${vault.vaultState.authority.toBase58()}`);
+    console.log(`Yield venue: ${vault.yieldVenuePda.toBase58()}`);
+  } else {
+    console.log("Vault bootstrap: skipped because VAULTPROOF_CREDENTIALS_ONLY is enabled.");
+  }
   console.log(`Credential leaf: ${credential.credentialLeafPda.toBase58()}`);
   console.log(`Credential file: ${credential.outputPath}`);
   console.log(`Source-of-funds hash: ${credential.artifact.sourceOfFundsHashHex}`);

@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node ../scripts/package-circuit-artifacts.mjs && tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "postinstall": "sed -i'' -e 's|from \"./helpers\"|from \"./helpers.js\"|g' node_modules/@ledgerhq/errors/lib-es/index.js 2>/dev/null || true"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

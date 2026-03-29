@@ -134,17 +134,21 @@ Last updated: 2026-03-16
 ## PHASE 9: DEVNET DEPLOYMENT ✅
 
 - [x] Deploy all 3 programs to Solana devnet
-  - `kyc_registry`: `NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD`
-  - `vusd_vault`: `CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu`
-  - `compliance_admin`: `BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K`
+  - `kyc_registry`: `HKAr17WzrUyXudnWb63jxpRtXSEYAFnovv3kVfSKB4ih`
+  - `vusd_vault`: `2ZrgfkWWHoverBrKXwZsUnmZMaHUFssGipng31jrnn28`
+  - `compliance_admin`: `J6Z2xLJajs627cCpQQGBRqkvPEGE6YkXsx22CTwFkCaF`
 - [x] Configure frontend for devnet cluster
 - [x] Create devnet test credentials
 - [x] Initialize vault on devnet (share mint, USDC reserve, thresholds)
 - [x] Pre-fund test accounts with devnet SOL + test USDC (1M test USDC minted)
   - Test USDC Mint: `Rzy12Rn2BeyWMo47P5byzkKFPAWsvJqg19ju2Mmu8Da`
   - Share Mint: `BV6kW5wEMABsYtxFtuUwWEseeayYixgFfaAftUj3j3Zp`
-  - Vault State: `CFfJc2twicWbCwyZX2s7VZmtda6grkE2GYNNJkNF2hDo`
+  - Registry PDA: `DAS2RiFpGVh9enhXq13E9a2ScVCoTi867CSYXCK8gBQ3`
+  - State Tree PDA: `B5RQ3bTuoqLdKr4Mi3LMNh4PfQM812ozyRBx1UNnVzzi`
+  - Vault State: `CvQYwyNyRmxMKSpfesGMjw7qBxzseaUdh2UEE7YrbCDf`
+  - USDC Reserve: `75qEzEF8dmwjV31cLrh8Q4NqbW8dJimEauEKoLRHAFyz`
   - Authority: `DzGXeLhKHH81BKSLnQ82FWbmxyPezd7FUgLGDvSkzPge`
+  - Authority model note: direct wallet authority is for devnet/demo bootstrap; Squads multisig remains the intended future/production authority.
 
 ## PHASE 10: FINAL POLISH ✅
 

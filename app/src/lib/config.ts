@@ -12,10 +12,14 @@ export interface AppConfig {
   wsUrl: string;
 }
 
-const PROGRAM_IDS = {
-  complianceAdmin: 'BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K',
-  kycRegistry: 'NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD',
-  vusdVault: 'CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu',
+export const PROGRAM_IDS = {
+  complianceAdmin:
+    import.meta.env.VITE_COMPLIANCE_ADMIN_PROGRAM_ID ??
+    'J6Z2xLJajs627cCpQQGBRqkvPEGE6YkXsx22CTwFkCaF',
+  kycRegistry:
+    import.meta.env.VITE_KYC_REGISTRY_PROGRAM_ID ?? 'HKAr17WzrUyXudnWb63jxpRtXSEYAFnovv3kVfSKB4ih',
+  vusdVault:
+    import.meta.env.VITE_VUSD_VAULT_PROGRAM_ID ?? '2ZrgfkWWHoverBrKXwZsUnmZMaHUFssGipng31jrnn28',
 } as const;
 
 const CONFIGS: Record<ClusterEnv, AppConfig> = {

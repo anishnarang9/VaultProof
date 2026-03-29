@@ -6,7 +6,7 @@
 use anchor_lang::prelude::*;
 use solana_poseidon::{hashv as poseidon_hashv, Endianness, Parameters};
 
-declare_id!("NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD");
+declare_id!("HKAr17WzrUyXudnWb63jxpRtXSEYAFnovv3kVfSKB4ih");
 
 pub const STATE_TREE_DEPTH: usize = 20;
 pub const MAX_LEAVES: u32 = 1 << STATE_TREE_DEPTH;

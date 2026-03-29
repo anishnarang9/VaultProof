@@ -28,8 +28,8 @@ const ROOT = resolve(__dirname, '..', '..');
 const PROJECT_ROOT = resolve(ROOT, '..');
 const E2E_STATE_FILE = resolve(ROOT, 'e2e', '.localnet-state.json');
 
-const KYC_REGISTRY_PROGRAM_ID = new PublicKey('NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD');
-const VUSD_VAULT_PROGRAM_ID = new PublicKey('CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu');
+const KYC_REGISTRY_PROGRAM_ID = new PublicKey('HKAr17WzrUyXudnWb63jxpRtXSEYAFnovv3kVfSKB4ih');
+const VUSD_VAULT_PROGRAM_ID = new PublicKey('2ZrgfkWWHoverBrKXwZsUnmZMaHUFssGipng31jrnn28');
 
 interface LocalnetState {
   walletSecretBase58: string;

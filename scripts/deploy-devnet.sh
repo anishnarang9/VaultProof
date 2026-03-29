@@ -8,6 +8,7 @@ COMPLIANCE_SRC="$ROOT_DIR/programs/compliance-admin/src/lib.rs"
 KYC_SRC="$ROOT_DIR/programs/kyc-registry/src/lib.rs"
 VAULT_SRC="$ROOT_DIR/programs/vusd-vault/src/lib.rs"
 PROGRAM_IDS_FILE="$TARGET_DEPLOY_DIR/program-ids.env"
+FORCE_NEW_PROGRAM_IDS="${VAULTPROOF_FORCE_NEW_PROGRAM_IDS:-${VAULTPROOF_ROTATE_PROGRAM_IDS:-0}}"
 
 mkdir -p "$TARGET_DEPLOY_DIR"
 
@@ -20,6 +21,34 @@ generate_keypair() {
     -o "$path" >/dev/null
 }
 
+is_true() {
+  local normalized
+  normalized="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+
+  case "$normalized" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+ensure_keypair() {
+  local path="$1"
+
+  if [[ ! -f "$path" ]]; then
+    echo "Generating missing program keypair: $(basename "$path")"
+    generate_keypair "$path"
+    return
+  fi
+
+  if is_true "$FORCE_NEW_PROGRAM_IDS"; then
+    echo "Force-rotating program keypair: $(basename "$path")"
+    generate_keypair "$path"
+    return
+  fi
+
+  echo "Reusing existing keypair: $(basename "$path")"
+}
+
 program_id_for() {
   local keypair="$1"
   solana address -k "$keypair"
@@ -28,17 +57,39 @@ program_id_for() {
 update_anchor_program_id() {
   local name="$1"
   local program_id="$2"
-  perl -0pi -e "s/^(${name}\\s*=\\s*\")[^\"]+(\"\\s*)/\$1${program_id}\$2/gm" "$ANCHOR_TOML"
+  node - "$ANCHOR_TOML" "$name" "$program_id" <<'NODE'
+const fs = require('fs');
+
+const [filePath, programName, programId] = process.argv.slice(2);
+const source = fs.readFileSync(filePath, 'utf8');
+const pattern = new RegExp(`^(${programName}\\s*=\\s*")[^"]+(")`, 'gm');
+const next = source.replace(pattern, `$1${programId}$2`);
+
+if (!pattern.test(source)) {
+  throw new Error(`Could not update ${programName} in ${filePath}`);
+}
+
+fs.writeFileSync(filePath, next);
+NODE
 }
 
 update_declare_id() {
   local file="$1"
   local program_id="$2"
-  perl -0pi -e "s/declare_id!\\(\"[^\"]+\"\\);/declare_id!(\"${program_id}\");/" "$file"
+  node - "$file" "$program_id" <<'NODE'
+const fs = require('fs');
+
+const [filePath, programId] = process.argv.slice(2);
+const source = fs.readFileSync(filePath, 'utf8');
+const pattern = /declare_id!\("[^"]+"\);/;
+const next = source.replace(pattern, `declare_id!("${programId}");`);
+
+if (!pattern.test(source)) {
+  throw new Error(`Could not update declare_id! in ${filePath}`);
 }
 
-extract_declare_id() {
-  sed -n 's/.*declare_id!(\"\([^\"]*\)\").*/\1/p' "$1"
+fs.writeFileSync(filePath, next);
+NODE
 }
 
 deploy_program() {
@@ -67,10 +118,14 @@ if awk "BEGIN { exit !($BALANCE < 2) }"; then
   sleep 5
 fi
 
-echo "Generating fresh program keypairs..."
-generate_keypair "$TARGET_DEPLOY_DIR/kyc_registry-keypair.json"
-generate_keypair "$TARGET_DEPLOY_DIR/vusd_vault-keypair.json"
-generate_keypair "$TARGET_DEPLOY_DIR/compliance_admin-keypair.json"
+if is_true "$FORCE_NEW_PROGRAM_IDS"; then
+  echo "Preparing program keypairs with forced rotation..."
+else
+  echo "Preparing program keypairs..."
+fi
+ensure_keypair "$TARGET_DEPLOY_DIR/kyc_registry-keypair.json"
+ensure_keypair "$TARGET_DEPLOY_DIR/vusd_vault-keypair.json"
+ensure_keypair "$TARGET_DEPLOY_DIR/compliance_admin-keypair.json"
 
 KYC_ID="$(program_id_for "$TARGET_DEPLOY_DIR/kyc_registry-keypair.json")"
 VAULT_ID="$(program_id_for "$TARGET_DEPLOY_DIR/vusd_vault-keypair.json")"
@@ -87,22 +142,10 @@ update_anchor_program_id "kyc_registry" "$KYC_ID"
 update_anchor_program_id "vusd_vault" "$VAULT_ID"
 update_anchor_program_id "compliance_admin" "$COMPLIANCE_ID"
 
-echo "Updating compliance-admin declare_id!..."
+echo "Updating program declare_id! macros..."
+update_declare_id "$KYC_SRC" "$KYC_ID"
+update_declare_id "$VAULT_SRC" "$VAULT_ID"
 update_declare_id "$COMPLIANCE_SRC" "$COMPLIANCE_ID"
-
-KYC_DECLARE_ID="$(extract_declare_id "$KYC_SRC")"
-VAULT_DECLARE_ID="$(extract_declare_id "$VAULT_SRC")"
-
-if [[ "$KYC_DECLARE_ID" != "$KYC_ID" || "$VAULT_DECLARE_ID" != "$VAULT_ID" ]]; then
-  echo ""
-  echo "Fresh program IDs have been generated and written to $PROGRAM_IDS_FILE."
-  echo "Anchor.toml and compliance-admin were updated, but deploy is blocked until:"
-  echo "  - programs/kyc-registry/src/lib.rs declare_id! matches $KYC_ID"
-  echo "  - programs/vusd-vault/src/lib.rs declare_id! matches $VAULT_ID"
-  echo ""
-  echo "This stop is intentional so we do not deploy mismatched binaries."
-  exit 1
-fi
 
 echo "Building programs..."
 anchor build

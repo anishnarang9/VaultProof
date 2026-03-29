@@ -131,6 +131,32 @@ export interface TransferRecordWithAddress extends TransferRecord {
   address: PublicKey;
 }
 
+export interface WhitelistedYieldVenue {
+  venueAddress: PublicKey;
+  name: string;
+  jurisdictionWhitelist: number[];
+  allocationCapBps: number;
+  active: boolean;
+  riskRating: number;
+  bump: number;
+}
+
+export interface WhitelistedYieldVenueWithAddress extends WhitelistedYieldVenue {
+  address: PublicKey;
+}
+
+export interface DecryptionAuthorization {
+  transferRecord: PublicKey;
+  reasonHash: number[];
+  authorizedBy: PublicKey;
+  timestamp: BN;
+  bump: number;
+}
+
+export interface DecryptionAuthorizationWithAddress extends DecryptionAuthorization {
+  address: PublicKey;
+}
+
 export interface StoredCredential {
   fullName: string;
   dateOfBirth: string;
@@ -154,6 +180,8 @@ export interface VaultProofReadClient {
   fetchStateTree: () => Promise<StateTree>;
   fetchTransferRecords: () => Promise<TransferRecordWithAddress[]>;
   fetchCredentialLeaves: () => Promise<CredentialLeafWithAddress[]>;
+  fetchYieldVenues: () => Promise<WhitelistedYieldVenueWithAddress[]>;
+  fetchDecryptionAuthorizations: () => Promise<DecryptionAuthorizationWithAddress[]>;
 }
 
 export interface CircuitInputParams {
@@ -305,6 +333,34 @@ export function createEmptyTransferRecord(
     encryptedMetadata: overrides.encryptedMetadata ?? [],
     decryptionAuthorized: overrides.decryptionAuthorized ?? false,
     signer: overrides.signer ?? EMPTY_PUBLIC_KEY,
+    bump: overrides.bump ?? 0,
+  };
+}
+
+export function createEmptyWhitelistedYieldVenue(
+  overrides: Partial<WhitelistedYieldVenueWithAddress> = {},
+): WhitelistedYieldVenueWithAddress {
+  return {
+    address: overrides.address ?? EMPTY_PUBLIC_KEY,
+    venueAddress: overrides.venueAddress ?? EMPTY_PUBLIC_KEY,
+    name: overrides.name ?? '',
+    jurisdictionWhitelist: overrides.jurisdictionWhitelist ?? emptyBytes(32),
+    allocationCapBps: overrides.allocationCapBps ?? 0,
+    active: overrides.active ?? false,
+    riskRating: overrides.riskRating ?? 0,
+    bump: overrides.bump ?? 0,
+  };
+}
+
+export function createEmptyDecryptionAuthorization(
+  overrides: Partial<DecryptionAuthorizationWithAddress> = {},
+): DecryptionAuthorizationWithAddress {
+  return {
+    address: overrides.address ?? EMPTY_PUBLIC_KEY,
+    transferRecord: overrides.transferRecord ?? EMPTY_PUBLIC_KEY,
+    reasonHash: overrides.reasonHash ?? emptyBytes(32),
+    authorizedBy: overrides.authorizedBy ?? EMPTY_PUBLIC_KEY,
+    timestamp: overrides.timestamp ?? bn(0),
     bump: overrides.bump ?? 0,
   };
 }

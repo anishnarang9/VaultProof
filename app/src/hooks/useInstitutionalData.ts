@@ -1,13 +1,23 @@
 import { BN } from '@coral-xyz/anchor';
 import { PublicKey } from '@solana/web3.js';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { defaultReadClient } from '../lib/readClient';
+import {
+  type DecryptionAuthorizationWithAddress,
+  TransferType,
+  type VaultProofReadClient,
+  type WhitelistedYieldVenueWithAddress,
+} from '../lib/types';
 import { useRegistryState } from './useRegistryState';
 import { useTransferRecords } from './useTransferRecords';
 import { useVaultState } from './useVaultState';
-import { TransferType, createEmptyTransferRecord, type TransferRecordWithAddress } from '../lib/types';
+
+const EMPTY_PUBLIC_KEY = '11111111111111111111111111111111';
+const textDecoder = new TextDecoder();
 
 export interface YieldVenueView {
+  accountAddress: PublicKey;
   active: boolean;
   allocationCapBps: number;
   connected: boolean;
@@ -16,6 +26,7 @@ export interface YieldVenueView {
   jurisdiction: string;
   name: string;
   riskRating: 'Low' | 'Moderate' | 'Elevated';
+  venueAddress: string;
 }
 
 export interface GovernanceProposalView {
@@ -32,122 +43,6 @@ export interface TrackMappingItem {
   requirement: string;
   status: string;
 }
-
-function createKey(seed: number) {
-  const bytes = new Uint8Array(32).fill(seed);
-  bytes[0] = seed || 1;
-  return new PublicKey(bytes);
-}
-
-function toNumber(value: BN | number) {
-  return value instanceof BN ? Number(value.toString()) : value;
-}
-
-function createMockRecords(investor?: PublicKey): TransferRecordWithAddress[] {
-  const investorKey = investor ?? createKey(24);
-  const now = Math.floor(Date.now() / 1000);
-  const entries = [
-    {
-      address: createKey(40),
-      amount: new BN(180_000),
-      decryptionAuthorized: true,
-      encryptedMetadata: Array.from({ length: 16 }, (_, index) => index + 1),
-      proofHash: Array.from({ length: 32 }, (_, index) => (index * 3) % 255),
-      signer: investorKey,
-      timestamp: new BN(now - 86_400 * 12),
-      transferType: TransferType.Deposit,
-    },
-    {
-      address: createKey(41),
-      amount: new BN(45_000),
-      decryptionAuthorized: false,
-      encryptedMetadata: Array.from({ length: 16 }, (_, index) => (index * 5) % 255),
-      proofHash: Array.from({ length: 32 }, (_, index) => (index * 7) % 255),
-      signer: investorKey,
-      timestamp: new BN(now - 86_400 * 8),
-      transferType: TransferType.Transfer,
-    },
-    {
-      address: createKey(42),
-      amount: new BN(28_000),
-      decryptionAuthorized: false,
-      encryptedMetadata: Array.from({ length: 16 }, (_, index) => (index * 9) % 255),
-      proofHash: Array.from({ length: 32 }, (_, index) => (index * 11) % 255),
-      signer: investorKey,
-      timestamp: new BN(now - 86_400 * 3),
-      transferType: TransferType.Withdrawal,
-    },
-  ];
-
-  return entries.map((entry) => ({
-    ...createEmptyTransferRecord(entry),
-    address: entry.address,
-  }));
-}
-
-const defaultGovernanceMembers = [createKey(9), createKey(10), createKey(11)].map((key) =>
-  key.toBase58(),
-);
-
-const defaultYieldVenues: YieldVenueView[] = [
-  {
-    active: true,
-    allocationCapBps: 3_500,
-    connected: true,
-    currentAllocationUsd: 540_000,
-    id: 'kamino-main',
-    jurisdiction: 'Switzerland, Singapore',
-    name: 'Kamino Treasury Reserve',
-    riskRating: 'Low',
-  },
-  {
-    active: true,
-    allocationCapBps: 1_800,
-    connected: false,
-    currentAllocationUsd: 190_000,
-    id: 'cash-ladder',
-    jurisdiction: 'United States',
-    name: 'Treasury Bill Ladder',
-    riskRating: 'Low',
-  },
-  {
-    active: false,
-    allocationCapBps: 1_200,
-    connected: false,
-    currentAllocationUsd: 0,
-    id: 'stable-repo',
-    jurisdiction: 'EU',
-    name: 'Stable Repo Sleeve',
-    riskRating: 'Moderate',
-  },
-];
-
-const defaultProposals: GovernanceProposalView[] = [
-  {
-    description: 'Increase circuit breaker threshold for quarter-end settlement activity.',
-    eta: 'Ready for execution',
-    id: 'SQD-101',
-    signatures: '2 / 3 signers',
-    status: 'Ready',
-    title: 'Adjust daily outflow threshold',
-  },
-  {
-    description: 'Add Kamino venue to the approved venue registry with 35% cap.',
-    eta: 'Awaiting final signer',
-    id: 'SQD-102',
-    signatures: '1 / 3 signers',
-    status: 'Pending',
-    title: 'Approve Kamino allocation',
-  },
-  {
-    description: 'Authorize transfer metadata decryption for FINMA information request.',
-    eta: 'Executed 2 hours ago',
-    id: 'SQD-099',
-    signatures: '3 / 3 signers',
-    status: 'Executed',
-    title: 'Release Travel Rule payload',
-  },
-];
 
 const trackMapping: TrackMappingItem[] = [
   {
@@ -166,33 +61,160 @@ const trackMapping: TrackMappingItem[] = [
     status: 'Ready',
   },
   {
-    feature: 'Squads-style approval surface',
+    feature: 'Authority-routed compliance actions',
     requirement: 'Institutional governance',
-    status: 'Mocked pending Agent 4',
+    status: 'Live',
   },
 ];
 
-export function useInstitutionalData() {
-  const { publicKey } = useWallet();
-  const vaultState = useVaultState();
-  const registryState = useRegistryState();
-  const transferState = useTransferRecords();
+function toNumber(value: BN | number) {
+  return value instanceof BN ? Number(value.toString()) : value;
+}
 
-  const records = useMemo(() => {
-    if (transferState.records.length > 0) {
-      return transferState.records;
+function normalizeJurisdiction(bytes: number[]) {
+  const trimmed = Uint8Array.from(bytes).filter((byte) => byte !== 0);
+
+  if (trimmed.length === 0) {
+    return 'Any';
+  }
+
+  const printable = Array.from(trimmed).every((byte) => byte >= 32 && byte <= 126);
+
+  if (!printable) {
+    return `0x${Array.from(trimmed)
+      .slice(0, 8)
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('')}`;
+  }
+
+  return textDecoder.decode(trimmed);
+}
+
+function normalizeRiskRating(value: number): YieldVenueView['riskRating'] {
+  if (value <= 2) {
+    return 'Low';
+  }
+
+  if (value === 3) {
+    return 'Moderate';
+  }
+
+  return 'Elevated';
+}
+
+function buildYieldVenueView(
+  venue: WhitelistedYieldVenueWithAddress,
+  totalAssets: number,
+): YieldVenueView {
+  const estimatedAllocation = (totalAssets * venue.allocationCapBps) / 10_000;
+
+  return {
+    accountAddress: venue.address,
+    active: venue.active,
+    allocationCapBps: venue.allocationCapBps,
+    connected: venue.active,
+    currentAllocationUsd: venue.active ? estimatedAllocation : 0,
+    id: venue.address.toBase58(),
+    jurisdiction: normalizeJurisdiction(venue.jurisdictionWhitelist),
+    name: venue.name || venue.venueAddress.toBase58(),
+    riskRating: normalizeRiskRating(venue.riskRating),
+    venueAddress: venue.venueAddress.toBase58(),
+  };
+}
+
+function buildGovernanceProposal(
+  authorization: DecryptionAuthorizationWithAddress,
+): GovernanceProposalView {
+  const timestamp = Number(authorization.timestamp.toString()) * 1000;
+
+  return {
+    description: `Transfer record ${authorization.transferRecord.toBase58()} authorized by ${authorization.authorizedBy.toBase58()}.`,
+    eta: new Date(timestamp).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }),
+    id: authorization.address.toBase58(),
+    signatures: '1 / 1 authority',
+    status: 'Executed',
+    title: 'Authorize decryption',
+  };
+}
+
+export function useInstitutionalData(client: VaultProofReadClient = defaultReadClient) {
+  const { publicKey } = useWallet();
+  const vaultState = useVaultState(client);
+  const registryState = useRegistryState(client);
+  const transferState = useTransferRecords(client);
+  const [yieldVenuesRaw, setYieldVenuesRaw] = useState<WhitelistedYieldVenueWithAddress[]>([]);
+  const [decryptionAuthorizations, setDecryptionAuthorizations] = useState<
+    DecryptionAuthorizationWithAddress[]
+  >([]);
+  const [supplementalError, setSupplementalError] = useState<string | null>(null);
+  const [supplementalLoading, setSupplementalLoading] = useState(true);
+
+  const refreshSupplementalData = useCallback(async () => {
+    setSupplementalLoading(true);
+    setSupplementalError(null);
+
+    try {
+      const [nextYieldVenues, nextAuthorizations] = await Promise.all([
+        client.fetchYieldVenues(),
+        client.fetchDecryptionAuthorizations(),
+      ]);
+      setYieldVenuesRaw(nextYieldVenues);
+      setDecryptionAuthorizations(nextAuthorizations);
+    } catch (caughtError) {
+      setSupplementalError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : 'Unable to load operator data.',
+      );
+    } finally {
+      setSupplementalLoading(false);
+    }
+  }, [client]);
+
+  useEffect(() => {
+    void refreshSupplementalData();
+  }, [refreshSupplementalData]);
+
+  const records = transferState.records;
+  const totalAssets = toNumber(vaultState.data.totalAssets);
+
+  const yieldVenues = useMemo(
+    () => yieldVenuesRaw.map((venue) => buildYieldVenueView(venue, totalAssets)),
+    [totalAssets, yieldVenuesRaw],
+  );
+
+  const currentVenue = useMemo(() => {
+    const yieldSource = vaultState.data.yieldSource.toBase58();
+    const sourceVenue = yieldVenues.find((venue) => venue.venueAddress === yieldSource);
+
+    if (sourceVenue) {
+      return sourceVenue.name;
     }
 
-    return createMockRecords(publicKey ?? undefined);
-  }, [publicKey, transferState.records]);
+    return yieldVenues.find((venue) => venue.active)?.name ?? 'Liquid buffer';
+  }, [vaultState.data.yieldSource, yieldVenues]);
+
+  const recordsByTimestamp = useMemo(
+    () =>
+      [...records].sort(
+        (left, right) => Number(left.timestamp.toString()) - Number(right.timestamp.toString()),
+      ),
+    [records],
+  );
 
   const sharePriceHistory = useMemo(() => {
-    const ordered = [...records].sort(
-      (left, right) => Number(left.timestamp.toString()) - Number(right.timestamp.toString()),
-    );
-    const baseline = vaultState.data.sharePrice > 0 ? vaultState.data.sharePrice : 1.02;
+    if (recordsByTimestamp.length === 0) {
+      return [];
+    }
 
-    return ordered.map((record, index) => {
+    const baseline = vaultState.data.sharePrice > 0 ? vaultState.data.sharePrice : 1;
+
+    return recordsByTimestamp.map((record, index) => {
       const amount = toNumber(record.amount);
       const directionalDelta =
         record.transferType === TransferType.Withdrawal
@@ -209,10 +231,10 @@ export function useInstitutionalData() {
           day: 'numeric',
         }),
         outflow: record.transferType === TransferType.Withdrawal ? amount : 0,
-        sharePrice: Number((baseline + directionalDelta * (index - 1)).toFixed(3)),
+        sharePrice: Number((baseline + directionalDelta * index).toFixed(3)),
       };
     });
-  }, [records, vaultState.data.sharePrice]);
+  }, [recordsByTimestamp, vaultState.data.sharePrice]);
 
   const investorRecords = useMemo(() => {
     if (!publicKey) {
@@ -237,7 +259,7 @@ export function useInstitutionalData() {
     return Math.max(0, deposits - withdrawals);
   }, [depositHistory, investorRecords]);
 
-  const proportionalClaimUsd = shareBalance * (vaultState.data.sharePrice || 1.04);
+  const proportionalClaimUsd = shareBalance * (vaultState.data.sharePrice || 1);
   const firstDepositTimestamp = depositHistory[0]?.timestamp;
   const firstDepositSharePrice =
     sharePriceHistory.find(
@@ -256,17 +278,45 @@ export function useInstitutionalData() {
   );
 
   const treeCapacity = 2 ** registryState.data.stateTree.depth;
+  const governanceMembers =
+    vaultState.data.authority.toBase58() === EMPTY_PUBLIC_KEY
+      ? []
+      : [vaultState.data.authority.toBase58()];
+  const governanceProposals = decryptionAuthorizations.map(buildGovernanceProposal);
+
+  const refresh = useCallback(async () => {
+    await Promise.all([
+      vaultState.refresh(),
+      registryState.refresh(),
+      transferState.refresh(),
+      refreshSupplementalData(),
+    ]);
+  }, [
+    refreshSupplementalData,
+    registryState.refresh,
+    transferState.refresh,
+    vaultState.refresh,
+  ]);
 
   return {
+    decryptionAuthorizations,
     depositHistory,
-    governanceMembers: defaultGovernanceMembers,
-    governanceProposals: defaultProposals,
+    error:
+      supplementalError ?? transferState.error ?? registryState.error ?? vaultState.error,
+    governanceMembers,
+    governanceProposals,
+    isLoading:
+      supplementalLoading ||
+      transferState.isLoading ||
+      registryState.isLoading ||
+      vaultState.isLoading,
     portfolio: {
       proportionalClaimUsd,
       shareBalance,
       yieldEarned,
     },
     records,
+    refresh,
     registryHealth: {
       activeCredentials: toNumber(registryState.data.activeCredentials),
       capacityUtilization:
@@ -278,17 +328,17 @@ export function useInstitutionalData() {
     },
     sharePriceHistory,
     trackMapping,
-    usingMockRecords: transferState.records.length === 0,
+    usingMockRecords: false,
     vaultState,
     yieldMetrics: {
-      currentVenue: defaultYieldVenues.find((venue) => venue.active)?.name ?? 'Liquid buffer',
+      currentVenue,
       liquidBufferUsd:
-        toNumber(vaultState.data.totalAssets) * Math.max(0, 1 - vaultState.data.liquidBufferRatio),
+        totalAssets * Math.max(0, 1 - vaultState.data.liquidBufferRatio),
       yieldRate:
-        toNumber(vaultState.data.totalAssets) > 0
-          ? (toNumber(vaultState.data.totalYieldEarned) / toNumber(vaultState.data.totalAssets)) * 100
-          : 4.2,
-      yieldVenues: defaultYieldVenues,
+        totalAssets > 0
+          ? (toNumber(vaultState.data.totalYieldEarned) / totalAssets) * 100
+          : 0,
+      yieldVenues,
     },
   };
 }

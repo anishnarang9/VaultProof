@@ -8,6 +8,13 @@ import {
   getOrCreateAssociatedTokenAccount,
 } from "@solana/spl-token";
 
+import {
+  createAccountsCoderFromIdl,
+  createProgramFromIdl,
+  decodeAccountData,
+  ensureRequiredIdlArtifacts,
+} from "./devnet-bootstrap-helpers";
+
 const ROOT = resolve(__dirname, "..");
 const TEST_YIELD_VENUE = Keypair.fromSeed(Uint8Array.from(Array(32).fill(9))).publicKey;
 const USDC_DECIMALS = 1_000_000n;
@@ -18,6 +25,10 @@ const RISK_LIMITS = {
   maxDailyTransactions: 100,
 };
 const TEST_YIELD_AMOUNT = 100n * USDC_DECIMALS;
+// Devnet bootstrap uses direct wallet authority for speed; production should
+// move back to a Squads-style multisig authority once that path is wired.
+const PRODUCTION_AUTHORITY_NOTE =
+  "Direct wallet authority is used only for this devnet bootstrap lane. Squads multisig remains the intended future/production authority model and is not bootstrapped here.";
 
 type InitializedVault = {
   authority: PublicKey;
@@ -42,6 +53,23 @@ function loadIdl(name: string) {
   return JSON.parse(readFileSync(idlPath, "utf8"));
 }
 
+async function fetchDecodedAccount<T>(
+  connection: anchor.web3.Connection,
+  coder: {
+    decode: (accountName: string, data: Buffer) => T;
+  },
+  accountName: string,
+  address: PublicKey,
+) {
+  const info = await connection.getAccountInfo(address, "confirmed");
+
+  if (!info) {
+    throw new Error(`Account ${address.toBase58()} was not found.`);
+  }
+
+  return decodeAccountData(coder, accountName, info.data);
+}
+
 function providerPayer(provider: anchor.AnchorProvider) {
   const payer = (provider.wallet as any).payer;
   if (!payer) {
@@ -61,6 +89,10 @@ function deriveYieldVenuePda(programId: PublicKey, vaultStatePda: PublicKey, ven
 export async function initializeDevnetVault(): Promise<InitializedVault> {
   process.env.ANCHOR_PROVIDER_URL ??= "https://api.devnet.solana.com";
   process.env.ANCHOR_WALLET ??= `${process.env.HOME}/.config/solana/id.json`;
+  ensureRequiredIdlArtifacts({
+    programNames: ["vusd_vault"],
+    rootDir: ROOT,
+  });
 
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
@@ -68,7 +100,8 @@ export async function initializeDevnetVault(): Promise<InitializedVault> {
   const authority = provider.wallet.publicKey;
   const payer = providerPayer(provider);
   const idl = loadIdl("vusd_vault");
-  const vaultProgram = new anchor.Program(idl, provider);
+  const vaultProgram = createProgramFromIdl<anchor.Program<any>>(anchor, idl, provider);
+  const accountsCoder = createAccountsCoderFromIdl<anchor.BorshAccountsCoder>(anchor, idl);
 
   const [vaultStatePda] = PublicKey.findProgramAddressSync(
     [Buffer.from("vault_state")],
@@ -120,10 +153,15 @@ export async function initializeDevnetVault(): Promise<InitializedVault> {
     console.log(`Share mint: ${shareMint.publicKey.toBase58()}`);
   }
 
-  let vaultState = await (vaultProgram.account as any).vaultState.fetch(vaultStatePda);
+  let vaultState = await fetchDecodedAccount<any>(
+    provider.connection,
+    accountsCoder,
+    "VaultState",
+    vaultStatePda,
+  );
   if (!vaultState.authority.equals(authority)) {
     throw new Error(
-      `Vault authority is ${vaultState.authority.toBase58()}, but this script expects direct control by ${authority.toBase58()}. Use scripts/init-devnet-state.ts for the Squads-governed flow.`,
+      `Vault authority is ${vaultState.authority.toBase58()}, but this bootstrap lane expects direct control by ${authority.toBase58()}. ${PRODUCTION_AUTHORITY_NOTE}`,
     );
   }
 
@@ -169,7 +207,12 @@ export async function initializeDevnetVault(): Promise<InitializedVault> {
       .rpc();
   }
 
-  vaultState = await (vaultProgram.account as any).vaultState.fetch(vaultStatePda);
+  vaultState = await fetchDecodedAccount<any>(
+    provider.connection,
+    accountsCoder,
+    "VaultState",
+    vaultStatePda,
+  );
   if (BigInt(vaultState.totalYieldEarned.toString()) === 0n) {
     await (vaultProgram.methods as any)
       .accrueYield(bn(TEST_YIELD_AMOUNT))
@@ -178,7 +221,12 @@ export async function initializeDevnetVault(): Promise<InitializedVault> {
         vaultState: vaultStatePda,
       })
       .rpc();
-    vaultState = await (vaultProgram.account as any).vaultState.fetch(vaultStatePda);
+    vaultState = await fetchDecodedAccount<any>(
+      provider.connection,
+      accountsCoder,
+      "VaultState",
+      vaultStatePda,
+    );
   }
 
   await getOrCreateAssociatedTokenAccount(
@@ -211,6 +259,7 @@ async function main() {
   console.log(`Yield venue: ${result.yieldVenuePda.toBase58()}`);
   console.log(`Circuit breaker threshold: ${result.vaultState.circuitBreakerThreshold.toString()}`);
   console.log(`Total yield earned: ${result.vaultState.totalYieldEarned.toString()}`);
+  console.log(`Production note: ${PRODUCTION_AUTHORITY_NOTE}`);
 }
 
 if (require.main === module) {

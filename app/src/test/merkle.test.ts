@@ -6,9 +6,9 @@ import {
   getCurrentMerkleRoot,
 } from '../lib/merkle';
 
-const KYC_REGISTRY_PROGRAM_ID = new PublicKey('NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD');
-const KYC_REGISTRY_PDA = new PublicKey('EY9cnxuWA3K5iDy1pLdN3GrLmd4Jh4BiKoR7Qj7QKRUY');
-const STATE_TREE_PDA = new PublicKey('8MgBPHCkeQitSpWQUNT6SrqGBMyuWZ7aLAEWsfktzwsK');
+const KYC_REGISTRY_PROGRAM_ID = new PublicKey('HKAr17WzrUyXudnWb63jxpRtXSEYAFnovv3kVfSKB4ih');
+const KYC_REGISTRY_PDA = new PublicKey('DAS2RiFpGVh9enhXq13E9a2ScVCoTi867CSYXCK8gBQ3');
+const STATE_TREE_PDA = new PublicKey('B5RQ3bTuoqLdKr4Mi3LMNh4PfQM812ozyRBx1UNnVzzi');
 
 const registryAccountsIdl = {
   version: '0.1.0',

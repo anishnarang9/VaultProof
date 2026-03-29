@@ -2,18 +2,28 @@ import { BN, BorshAccountsCoder, BorshInstructionCoder, type Idl } from '@coral-
 import { PublicKey, SystemProgram } from '@solana/web3.js';
 import {
   buildAddCredentialTx,
+  buildAddYieldVenueTx,
+  buildAccrueYieldTx,
   buildAuthorizeDecryptionTx,
   buildDepositTx,
+  deriveRegistryPda,
+  deriveStateTreePda,
+  deriveUsdcReservePda,
+  deriveVaultStatePda,
+  buildRemoveYieldVenueTx,
+  buildUnpauseVaultTx,
+  buildUpdateRiskLimitsTx,
+  deriveYieldVenuePda,
   getPrograms,
 } from '../lib/program';
 
-const VUSD_VAULT_PROGRAM_ID = new PublicKey('CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu');
-const KYC_REGISTRY_PROGRAM_ID = new PublicKey('NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD');
-const COMPLIANCE_ADMIN_PROGRAM_ID = new PublicKey('BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K');
-const VAULT_STATE_PDA = new PublicKey('CFfJc2twicWbCwyZX2s7VZmtda6grkE2GYNNJkNF2hDo');
-const KYC_REGISTRY_PDA = new PublicKey('EY9cnxuWA3K5iDy1pLdN3GrLmd4Jh4BiKoR7Qj7QKRUY');
-const STATE_TREE_PDA = new PublicKey('8MgBPHCkeQitSpWQUNT6SrqGBMyuWZ7aLAEWsfktzwsK');
-const USDC_RESERVE_PDA = new PublicKey('GYTpXKDQuZCTHW1Fg2Bs5Mz2rJXqZAMRZ33ie4be6GxM');
+const VUSD_VAULT_PROGRAM_ID = new PublicKey('2ZrgfkWWHoverBrKXwZsUnmZMaHUFssGipng31jrnn28');
+const KYC_REGISTRY_PROGRAM_ID = new PublicKey('HKAr17WzrUyXudnWb63jxpRtXSEYAFnovv3kVfSKB4ih');
+const COMPLIANCE_ADMIN_PROGRAM_ID = new PublicKey('J6Z2xLJajs627cCpQQGBRqkvPEGE6YkXsx22CTwFkCaF');
+const VAULT_STATE_PDA = new PublicKey('CvQYwyNyRmxMKSpfesGMjw7qBxzseaUdh2UEE7YrbCDf');
+const KYC_REGISTRY_PDA = new PublicKey('DAS2RiFpGVh9enhXq13E9a2ScVCoTi867CSYXCK8gBQ3');
+const STATE_TREE_PDA = new PublicKey('B5RQ3bTuoqLdKr4Mi3LMNh4PfQM812ozyRBx1UNnVzzi');
+const USDC_RESERVE_PDA = new PublicKey('75qEzEF8dmwjV31cLrh8Q4NqbW8dJimEauEKoLRHAFyz');
 
 const vaultAccountsIdl = {
   version: '0.1.0',
@@ -148,6 +158,13 @@ describe('frontend program client', () => {
     );
   });
 
+  it('derives the rotated static PDAs in test mode', () => {
+    expect(deriveVaultStatePda().toBase58()).toBe(VAULT_STATE_PDA.toBase58());
+    expect(deriveUsdcReservePda().toBase58()).toBe(USDC_RESERVE_PDA.toBase58());
+    expect(deriveRegistryPda().toBase58()).toBe(KYC_REGISTRY_PDA.toBase58());
+    expect(deriveStateTreePda(KYC_REGISTRY_PDA).toBase58()).toBe(STATE_TREE_PDA.toBase58());
+  });
+
   it('buildDepositTx produces a Transaction with correct instruction data', async () => {
     const mock = createMockConnection();
     const programs = getPrograms(mock.connection as never, wallet as never);
@@ -243,7 +260,7 @@ describe('frontend program client', () => {
   it('buildAuthorizeDecryptionTx produces a Transaction', async () => {
     const { connection } = createMockConnection();
     const programs = getPrograms(connection as never, wallet as never);
-    const transferRecord = new PublicKey('CFfJc2twicWbCwyZX2s7VZmtda6grkE2GYNNJkNF2hDo');
+    const transferRecord = SystemProgram.programId;
 
     const tx = await buildAuthorizeDecryptionTx({
       program: programs.complianceAdmin,
@@ -259,5 +276,134 @@ describe('frontend program client', () => {
 
     expect(decoded?.name).toBe('authorizeDecryption');
     expect(instruction?.keys.some((meta) => meta.pubkey.equals(transferRecord))).toBe(true);
+  });
+
+  it('buildUpdateRiskLimitsTx encodes admin risk-limit updates', async () => {
+    const { connection } = createMockConnection();
+    const programs = getPrograms(connection as never, wallet as never);
+
+    const tx = await buildUpdateRiskLimitsTx({
+      circuitBreaker: new BN(100_000),
+      maxDailyTxns: 120,
+      maxSingleDeposit: new BN(50_000),
+      maxSingleTx: new BN(25_000),
+      program: programs.vusdVault,
+      signer: wallet.publicKey,
+    });
+
+    const instruction = tx.instructions.find((candidate) =>
+      candidate.programId.equals(programs.vusdVault.programId),
+    );
+    const coder = new BorshInstructionCoder(programs.vusdVault.idl as Idl);
+    const decoded = coder.decode(instruction?.data ?? Buffer.alloc(0));
+
+    expect(decoded?.name).toBe('updateRiskLimits');
+    expect((decoded?.data as { circuitBreakerThreshold: BN }).circuitBreakerThreshold.toString()).toBe('100000');
+    expect((decoded?.data as { maxSingleTransaction: BN }).maxSingleTransaction.toString()).toBe('25000');
+    expect((decoded?.data as { maxSingleDeposit: BN }).maxSingleDeposit.toString()).toBe('50000');
+    expect((decoded?.data as { maxDailyTransactions: number }).maxDailyTransactions).toBe(120);
+    expect(instruction?.keys[0]?.pubkey.toBase58()).toBe(VAULT_STATE_PDA.toBase58());
+    expect(instruction?.keys[1]?.pubkey.toBase58()).toBe(wallet.publicKey.toBase58());
+  });
+
+  it('buildUnpauseVaultTx encodes the unpause instruction', async () => {
+    const { connection } = createMockConnection();
+    const programs = getPrograms(connection as never, wallet as never);
+
+    const tx = await buildUnpauseVaultTx({
+      program: programs.vusdVault,
+      signer: wallet.publicKey,
+    });
+
+    const instruction = tx.instructions.find((candidate) =>
+      candidate.programId.equals(programs.vusdVault.programId),
+    );
+    const coder = new BorshInstructionCoder(programs.vusdVault.idl as Idl);
+    const decoded = coder.decode(instruction?.data ?? Buffer.alloc(0));
+
+    expect(decoded?.name).toBe('unpauseVault');
+    expect(instruction?.keys[0]?.pubkey.toBase58()).toBe(VAULT_STATE_PDA.toBase58());
+    expect(instruction?.keys[1]?.pubkey.toBase58()).toBe(wallet.publicKey.toBase58());
+  });
+
+  it('buildAddYieldVenueTx creates a yield-venue account instruction', async () => {
+    const { connection } = createMockConnection();
+    const programs = getPrograms(connection as never, wallet as never);
+    const venueAddress = new PublicKey('9xQeWvG816bUx9EPfEZELDq8Pjyo4LQm4iAfDdcQa1r1');
+
+    const tx = await buildAddYieldVenueTx({
+      allocationCapBps: 2_500,
+      jurisdictionWhitelist: Array.from({ length: 32 }, (_, index) => index + 1),
+      name: 'Kamino Prime',
+      program: programs.vusdVault,
+      riskRating: 3,
+      signer: wallet.publicKey,
+      venueAddress,
+    });
+
+    const instruction = tx.instructions.find((candidate) =>
+      candidate.programId.equals(programs.vusdVault.programId),
+    );
+    const coder = new BorshInstructionCoder(programs.vusdVault.idl as Idl);
+    const decoded = coder.decode(instruction?.data ?? Buffer.alloc(0));
+    const expectedYieldVenue = deriveYieldVenuePda(venueAddress);
+
+    expect(decoded?.name).toBe('addYieldVenue');
+    expect((decoded?.data as { venueAddress: PublicKey }).venueAddress.toBase58()).toBe(
+      venueAddress.toBase58(),
+    );
+    expect((decoded?.data as { name: string }).name).toBe('Kamino Prime');
+    expect((decoded?.data as { allocationCapBps: number }).allocationCapBps).toBe(2_500);
+    expect((decoded?.data as { riskRating: number }).riskRating).toBe(3);
+    expect(instruction?.keys[0]?.pubkey.toBase58()).toBe(VAULT_STATE_PDA.toBase58());
+    expect(instruction?.keys[1]?.pubkey.toBase58()).toBe(expectedYieldVenue.toBase58());
+    expect(instruction?.keys[2]?.pubkey.toBase58()).toBe(wallet.publicKey.toBase58());
+    expect(instruction?.keys[3]?.pubkey.toBase58()).toBe(SystemProgram.programId.toBase58());
+  });
+
+  it('buildAccrueYieldTx encodes yield accrual amount', async () => {
+    const { connection } = createMockConnection();
+    const programs = getPrograms(connection as never, wallet as never);
+
+    const tx = await buildAccrueYieldTx({
+      program: programs.vusdVault,
+      signer: wallet.publicKey,
+      yieldAmount: new BN(9_999),
+    });
+
+    const instruction = tx.instructions.find((candidate) =>
+      candidate.programId.equals(programs.vusdVault.programId),
+    );
+    const coder = new BorshInstructionCoder(programs.vusdVault.idl as Idl);
+    const decoded = coder.decode(instruction?.data ?? Buffer.alloc(0));
+
+    expect(decoded?.name).toBe('accrueYield');
+    expect((decoded?.data as { yieldAmount: BN }).yieldAmount.toString()).toBe('9999');
+    expect(instruction?.keys[0]?.pubkey.toBase58()).toBe(VAULT_STATE_PDA.toBase58());
+    expect(instruction?.keys[1]?.pubkey.toBase58()).toBe(wallet.publicKey.toBase58());
+  });
+
+  it('buildRemoveYieldVenueTx targets the derived yield-venue PDA', async () => {
+    const { connection } = createMockConnection();
+    const programs = getPrograms(connection as never, wallet as never);
+    const venueAddress = new PublicKey('J2uR6L3gAFy5zM7gc3KJ2YMBX1AHzrc4c3SBbGdv8wZ');
+
+    const tx = await buildRemoveYieldVenueTx({
+      program: programs.vusdVault,
+      signer: wallet.publicKey,
+      venueAddress,
+    });
+
+    const instruction = tx.instructions.find((candidate) =>
+      candidate.programId.equals(programs.vusdVault.programId),
+    );
+    const coder = new BorshInstructionCoder(programs.vusdVault.idl as Idl);
+    const decoded = coder.decode(instruction?.data ?? Buffer.alloc(0));
+    const expectedYieldVenue = deriveYieldVenuePda(venueAddress);
+
+    expect(decoded?.name).toBe('removeYieldVenue');
+    expect(instruction?.keys[0]?.pubkey.toBase58()).toBe(VAULT_STATE_PDA.toBase58());
+    expect(instruction?.keys[1]?.pubkey.toBase58()).toBe(expectedYieldVenue.toBase58());
+    expect(instruction?.keys[2]?.pubkey.toBase58()).toBe(wallet.publicKey.toBase58());
   });
 });

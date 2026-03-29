@@ -68,18 +68,20 @@ These IDs come from the committed deploy keypairs and are the same across localn
 
 | Program | Address |
 |---|---|
-| `kyc_registry` | `NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD` |
-| `vusd_vault` | `CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu` |
-| `compliance_admin` | `BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K` |
+| `kyc_registry` | `HKAr17WzrUyXudnWb63jxpRtXSEYAFnovv3kVfSKB4ih` |
+| `vusd_vault` | `2ZrgfkWWHoverBrKXwZsUnmZMaHUFssGipng31jrnn28` |
+| `compliance_admin` | `J6Z2xLJajs627cCpQQGBRqkvPEGE6YkXsx22CTwFkCaF` |
 
 ## Devnet Status
 
-As of March 15, 2026:
+Repo-side devnet/demo PDAs derived from those committed keypairs:
 
-- `kyc_registry` is deployed on devnet.
-- `compliance_admin` is deployed on devnet.
-- `vusd_vault` deployment is blocked by devnet SOL funding limits during `solana program deploy`.
-- The devnet registry was initialized and a test credential leaf was added with `scripts/create-devnet-credentials.sh`.
+- `registryPda`: `DAS2RiFpGVh9enhXq13E9a2ScVCoTi867CSYXCK8gBQ3`
+- `stateTreePda`: `B5RQ3bTuoqLdKr4Mi3LMNh4PfQM812ozyRBx1UNnVzzi`
+- `vaultStatePda`: `CvQYwyNyRmxMKSpfesGMjw7qBxzseaUdh2UEE7YrbCDf`
+- `usdcReservePda`: `75qEzEF8dmwjV31cLrh8Q4NqbW8dJimEauEKoLRHAFyz`
+- Devnet/demo bootstrap currently uses direct wallet authority for operational speed.
+- Squads multisig remains the intended future/production authority model.
 
 ## Production Roadmap
 

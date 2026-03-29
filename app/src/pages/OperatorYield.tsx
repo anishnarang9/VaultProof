@@ -1,5 +1,9 @@
+import { BN } from '@coral-xyz/anchor';
+import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { PublicKey } from '@solana/web3.js';
 import { useState } from 'react';
 import {
+  Alert,
   Badge,
   Button,
   Card,
@@ -20,13 +24,106 @@ import {
 import { useToast } from '../components/ui/primitives';
 import { useInstitutionalData } from '../hooks/useInstitutionalData';
 import { formatCurrency } from '../lib/format';
+import {
+  buildAccrueYieldTx,
+  buildAddYieldVenueTx,
+  getPrograms,
+} from '../lib/program';
+
+const textEncoder = new TextEncoder();
+
+function encodeJurisdictionWhitelist(value: string) {
+  const bytes = Array.from(textEncoder.encode(value)).slice(0, 32);
+
+  while (bytes.length < 32) {
+    bytes.push(0);
+  }
+
+  return bytes;
+}
 
 export default function OperatorYield() {
   const { toast } = useToast();
-  const { yieldMetrics } = useInstitutionalData();
+  const { yieldMetrics, refresh } = useInstitutionalData();
+  const { connection } = useConnection();
+  const anchorWallet = useAnchorWallet();
+  const { publicKey, sendTransaction } = useWallet();
+  const [venueAddress, setVenueAddress] = useState('');
   const [venueName, setVenueName] = useState('');
-  const [jurisdiction, setJurisdiction] = useState('Switzerland');
+  const [jurisdiction, setJurisdiction] = useState('United States');
   const [cap, setCap] = useState('1000');
+  const [riskRating, setRiskRating] = useState('2');
+  const [yieldAmount, setYieldAmount] = useState('5000');
+  const [status, setStatus] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleAddVenue = async () => {
+    if (!anchorWallet || !publicKey || !sendTransaction) {
+      setStatus('Connect wallet to manage vault.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setStatus(null);
+
+    try {
+      const { vusdVault } = getPrograms(connection, anchorWallet);
+      const transaction = await buildAddYieldVenueTx({
+        allocationCapBps: Number(cap || '0'),
+        jurisdictionWhitelist: encodeJurisdictionWhitelist(jurisdiction),
+        name: venueName,
+        program: vusdVault,
+        riskRating: Number(riskRating || '0'),
+        signer: publicKey,
+        venueAddress: new PublicKey(venueAddress),
+      });
+      const signature = await sendTransaction(transaction, connection);
+      await connection.confirmTransaction(signature, 'confirmed');
+      await refresh();
+      toast({
+        description: signature,
+        title: 'Yield venue added',
+        variant: 'success',
+      });
+      setStatus(`Yield venue added: ${signature}`);
+    } catch (caughtError) {
+      setStatus(caughtError instanceof Error ? caughtError.message : 'Unable to add yield venue.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleAccrueYield = async () => {
+    if (!anchorWallet || !publicKey || !sendTransaction) {
+      setStatus('Connect wallet to manage vault.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setStatus(null);
+
+    try {
+      const { vusdVault } = getPrograms(connection, anchorWallet);
+      const transaction = await buildAccrueYieldTx({
+        program: vusdVault,
+        signer: publicKey,
+        yieldAmount: new BN(yieldAmount || '0'),
+      });
+      const signature = await sendTransaction(transaction, connection);
+      await connection.confirmTransaction(signature, 'confirmed');
+      await refresh();
+      toast({
+        description: signature,
+        title: 'Yield accrued',
+        variant: 'success',
+      });
+      setStatus(`Yield accrued: ${signature}`);
+    } catch (caughtError) {
+      setStatus(caughtError instanceof Error ? caughtError.message : 'Unable to accrue yield.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div className="grid gap-6">
@@ -51,7 +148,7 @@ export default function OperatorYield() {
             <Badge variant="secondary">Whitelisted Yield Venues</Badge>
             <CardTitle className="mt-3">Venue registry</CardTitle>
             <CardDescription>
-              Mocked UI shell until the final vault IDL exposes venue management instructions.
+              Live venue configuration from the vault allowlist and current share-price posture.
             </CardDescription>
           </CardHeader>
           <CardContent className="overflow-x-auto rounded-[calc(var(--radius)*2)] border border-border px-0 pb-0">
@@ -59,6 +156,7 @@ export default function OperatorYield() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Venue</TableHead>
+                  <TableHead>Address</TableHead>
                   <TableHead>Jurisdiction</TableHead>
                   <TableHead>Allocation Cap</TableHead>
                   <TableHead>Risk</TableHead>
@@ -66,19 +164,28 @@ export default function OperatorYield() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {yieldMetrics.yieldVenues.map((venue) => (
-                  <TableRow key={venue.id}>
-                    <TableCell className="text-text-primary">{venue.name}</TableCell>
-                    <TableCell>{venue.jurisdiction}</TableCell>
-                    <TableCell>{(venue.allocationCapBps / 100).toFixed(2)}%</TableCell>
-                    <TableCell>{venue.riskRating}</TableCell>
-                    <TableCell>
-                      <Badge variant={venue.active ? 'success' : 'secondary'}>
-                        {venue.active ? 'Active' : 'Paused'}
-                      </Badge>
-                    </TableCell>
+                {yieldMetrics.yieldVenues.length > 0 ? (
+                  yieldMetrics.yieldVenues.map((venue) => (
+                    <TableRow key={venue.id}>
+                      <TableCell className="text-text-primary">{venue.name}</TableCell>
+                      <TableCell className="font-mono text-xs">{venue.venueAddress}</TableCell>
+                      <TableCell>{venue.jurisdiction}</TableCell>
+                      <TableCell>{(venue.allocationCapBps / 100).toFixed(2)}%</TableCell>
+                      <TableCell>{venue.riskRating}</TableCell>
+                      <TableCell>
+                        <Badge variant={venue.active ? 'success' : 'secondary'}>
+                          {venue.active ? 'Active' : 'Paused'}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <td className="px-4 py-8 text-center text-sm text-text-secondary" colSpan={6}>
+                      No yield venues configured.
+                    </td>
                   </TableRow>
-                ))}
+                )}
               </TableBody>
             </Table>
           </CardContent>
@@ -87,51 +194,102 @@ export default function OperatorYield() {
         <Card>
           <CardHeader>
             <Badge variant="outline">Venue Controls</Badge>
-            <CardTitle className="mt-3">Add or remove venue</CardTitle>
+            <CardTitle className="mt-3">Add venue or accrue yield</CardTitle>
             <CardDescription>
-              Until Agent 3 delivers the admin instructions, these controls operate in demo mode.
+              Submit live admin transactions to extend the venue allowlist or move share price
+              forward.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-5">
+            {!publicKey ? (
+              <Alert
+                description="Connect wallet to manage vault."
+                title="Connect wallet to manage vault"
+                variant="default"
+              />
+            ) : null}
+
+            {status ? (
+              <Alert
+                description={status}
+                title={status.toLowerCase().includes('unable') ? 'Yield action failed' : 'Yield action status'}
+                variant={status.toLowerCase().includes('unable') ? 'destructive' : 'default'}
+              />
+            ) : null}
+
+            <div className="grid gap-2">
+              <Label htmlFor="venueAddress">Venue address</Label>
+              <Input
+                disabled={isSubmitting}
+                id="venueAddress"
+                onChange={(event) => setVenueAddress(event.target.value)}
+                value={venueAddress}
+              />
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="venueName">Venue name</Label>
-              <Input id="venueName" onChange={(event) => setVenueName(event.target.value)} value={venueName} />
+              <Input
+                disabled={isSubmitting}
+                id="venueName"
+                onChange={(event) => setVenueName(event.target.value)}
+                value={venueName}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="jurisdiction">Jurisdiction</Label>
-              <Input id="jurisdiction" onChange={(event) => setJurisdiction(event.target.value)} value={jurisdiction} />
+              <Input
+                disabled={isSubmitting}
+                id="jurisdiction"
+                onChange={(event) => setJurisdiction(event.target.value)}
+                value={jurisdiction}
+              />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="cap">Allocation cap (bps)</Label>
-              <Input id="cap" onChange={(event) => setCap(event.target.value)} value={cap} />
+              <Input
+                disabled={isSubmitting}
+                id="cap"
+                onChange={(event) => setCap(event.target.value)}
+                value={cap}
+              />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="mode">Kamino status</Label>
-              <Select id="mode" defaultValue="connected">
-                <option value="connected">Connected</option>
-                <option value="demo">Demo mode</option>
+              <Label htmlFor="riskRating">Risk rating</Label>
+              <Select
+                disabled={isSubmitting}
+                id="riskRating"
+                onChange={(event) => setRiskRating(event.target.value)}
+                value={riskRating}
+              >
+                <option value="2">Low</option>
+                <option value="3">Moderate</option>
+                <option value="4">Elevated</option>
               </Select>
             </div>
             <Button
-              onClick={() =>
-                toast({
-                  description: `${venueName || 'New venue'} queued for governance review.`,
-                  title: 'Venue action staged',
-                  variant: 'success',
-                })
-              }
+              disabled={!publicKey || isSubmitting || !venueAddress || !venueName}
+              onClick={() => {
+                void handleAddVenue();
+              }}
               type="button"
             >
               Add Venue
             </Button>
+
+            <div className="grid gap-2 border-t border-border pt-5">
+              <Label htmlFor="yieldAmount">Yield amount</Label>
+              <Input
+                disabled={isSubmitting}
+                id="yieldAmount"
+                onChange={(event) => setYieldAmount(event.target.value)}
+                value={yieldAmount}
+              />
+            </div>
             <Button
-              onClick={() =>
-                toast({
-                  description: 'Manual accrue_yield demo action staged.',
-                  title: 'Yield accrual requested',
-                  variant: 'warning',
-                })
-              }
+              disabled={!publicKey || isSubmitting || !yieldAmount}
+              onClick={() => {
+                void handleAccrueYield();
+              }}
               type="button"
               variant="secondary"
             >

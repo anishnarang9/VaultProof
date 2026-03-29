@@ -15,18 +15,13 @@ import {
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
+import { PROGRAM_IDS } from './config';
 import { bytesToBigInt, bigintToBytes } from './crypto';
 import { getCredentialMerkleProof } from './merkle';
 
-export const VUSD_VAULT_PROGRAM_ID = new PublicKey(
-  'CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu',
-);
-export const KYC_REGISTRY_PROGRAM_ID = new PublicKey(
-  'NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD',
-);
-export const COMPLIANCE_ADMIN_PROGRAM_ID = new PublicKey(
-  'BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K',
-);
+export const VUSD_VAULT_PROGRAM_ID = new PublicKey(PROGRAM_IDS.vusdVault);
+export const KYC_REGISTRY_PROGRAM_ID = new PublicKey(PROGRAM_IDS.kycRegistry);
+export const COMPLIANCE_ADMIN_PROGRAM_ID = new PublicKey(PROGRAM_IDS.complianceAdmin);
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
   'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
@@ -36,10 +31,10 @@ const NUM_PUBLIC_INPUTS = 22;
 const STATE_TREE_DEPTH = 20;
 const textEncoder = new TextEncoder();
 const IS_TEST_MODE = import.meta.env.MODE === 'test';
-const TEST_VAULT_STATE_PDA = new PublicKey('CFfJc2twicWbCwyZX2s7VZmtda6grkE2GYNNJkNF2hDo');
-const TEST_USDC_RESERVE_PDA = new PublicKey('GYTpXKDQuZCTHW1Fg2Bs5Mz2rJXqZAMRZ33ie4be6GxM');
-const TEST_KYC_REGISTRY_PDA = new PublicKey('EY9cnxuWA3K5iDy1pLdN3GrLmd4Jh4BiKoR7Qj7QKRUY');
-const TEST_STATE_TREE_PDA = new PublicKey('8MgBPHCkeQitSpWQUNT6SrqGBMyuWZ7aLAEWsfktzwsK');
+const TEST_VAULT_STATE_PDA = new PublicKey('CvQYwyNyRmxMKSpfesGMjw7qBxzseaUdh2UEE7YrbCDf');
+const TEST_USDC_RESERVE_PDA = new PublicKey('75qEzEF8dmwjV31cLrh8Q4NqbW8dJimEauEKoLRHAFyz');
+const TEST_KYC_REGISTRY_PDA = new PublicKey('DAS2RiFpGVh9enhXq13E9a2ScVCoTi867CSYXCK8gBQ3');
+const TEST_STATE_TREE_PDA = new PublicKey('B5RQ3bTuoqLdKr4Mi3LMNh4PfQM812ozyRBx1UNnVzzi');
 const globalWithNodeShims = globalThis as {
   Buffer?: unknown;
   global?: typeof globalThis;
@@ -164,6 +159,65 @@ const vaultProgramIdl = {
         { name: 'requester', writable: true, signer: true },
         { name: 'token_program' },
         { name: 'system_program', address: SystemProgram.programId.toBase58() },
+      ],
+      args: [],
+    },
+    {
+      name: 'update_risk_limits',
+      discriminator: [48, 53, 83, 216, 119, 29, 74, 182],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'authority', signer: true },
+      ],
+      args: [
+        { name: 'circuit_breaker_threshold', type: 'u64' },
+        { name: 'max_single_transaction', type: 'u64' },
+        { name: 'max_single_deposit', type: 'u64' },
+        { name: 'max_daily_transactions', type: 'u32' },
+      ],
+    },
+    {
+      name: 'unpause_vault',
+      discriminator: [125, 29, 213, 213, 114, 155, 125, 63],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'authority', signer: true },
+      ],
+      args: [],
+    },
+    {
+      name: 'add_yield_venue',
+      discriminator: [154, 2, 62, 195, 82, 190, 63, 8],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'yield_venue', writable: true },
+        { name: 'authority', writable: true, signer: true },
+        { name: 'system_program', address: SystemProgram.programId.toBase58() },
+      ],
+      args: [
+        { name: 'venue_address', type: 'pubkey' },
+        { name: 'name', type: 'string' },
+        { name: 'jurisdiction_whitelist', type: { array: ['u8', 32] } },
+        { name: 'allocation_cap_bps', type: 'u16' },
+        { name: 'risk_rating', type: 'u8' },
+      ],
+    },
+    {
+      name: 'accrue_yield',
+      discriminator: [243, 28, 81, 65, 175, 178, 5, 112],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'authority', signer: true },
+      ],
+      args: [{ name: 'yield_amount', type: 'u64' }],
+    },
+    {
+      name: 'remove_yield_venue',
+      discriminator: [27, 11, 126, 231, 154, 110, 203, 229],
+      accounts: [
+        { name: 'vault_state', writable: true },
+        { name: 'yield_venue', writable: true },
+        { name: 'authority', writable: true, signer: true },
       ],
       args: [],
     },
@@ -460,6 +514,13 @@ export function deriveCredentialLeafPda(leafHash: Uint8Array) {
 
 export function deriveDecryptionAuthorizationPda(transferRecord: PublicKey) {
   return derivePda(COMPLIANCE_ADMIN_PROGRAM_ID, 'decryption_auth', transferRecord);
+}
+
+export function deriveYieldVenuePda(
+  venueAddress: PublicKey,
+  vaultState: PublicKey = deriveVaultStatePda(),
+) {
+  return derivePda(VUSD_VAULT_PROGRAM_ID, 'yield_venue', vaultState, venueAddress);
 }
 
 function createProvider(connection: Connection, wallet: AnchorWallet) {
@@ -945,6 +1006,13 @@ async function buildReasonHash() {
   return bytes32(await sha256(textEncoder.encode('vaultproof:decryption-authorized')));
 }
 
+function adminUpdateKeys(signer: PublicKey) {
+  return [
+    { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
+    { pubkey: signer, isSigner: true, isWritable: true },
+  ];
+}
+
 export async function buildAuthorizeDecryptionTx(params: {
   program: Program<Idl>;
   transferRecord: PublicKey;
@@ -964,6 +1032,110 @@ export async function buildAuthorizeDecryptionTx(params: {
       { pubkey: signer, isSigner: true, isWritable: true },
       { pubkey: VUSD_VAULT_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ]),
+  );
+}
+
+export async function buildUpdateRiskLimitsTx(params: {
+  program: Program<Idl>;
+  signer: PublicKey;
+  circuitBreaker: BN;
+  maxSingleTx: BN;
+  maxSingleDeposit: BN;
+  maxDailyTxns: number;
+}) {
+  const {
+    program,
+    signer,
+    circuitBreaker,
+    maxSingleTx,
+    maxSingleDeposit,
+    maxDailyTxns,
+  } = params;
+
+  return new Transaction().add(
+    createInstruction(program, 'update_risk_limits', {
+      circuit_breaker_threshold: amountToArg(circuitBreaker),
+      max_daily_transactions: maxDailyTxns,
+      max_single_deposit: amountToArg(maxSingleDeposit),
+      max_single_transaction: amountToArg(maxSingleTx),
+    }, adminUpdateKeys(signer)),
+  );
+}
+
+export async function buildUnpauseVaultTx(params: {
+  program: Program<Idl>;
+  signer: PublicKey;
+}) {
+  const { program, signer } = params;
+
+  return new Transaction().add(
+    createInstruction(program, 'unpause_vault', {}, adminUpdateKeys(signer)),
+  );
+}
+
+export async function buildAddYieldVenueTx(params: {
+  program: Program<Idl>;
+  signer: PublicKey;
+  venueAddress: PublicKey;
+  name: string;
+  jurisdictionWhitelist: Uint8Array | number[];
+  allocationCapBps: number;
+  riskRating: number;
+}) {
+  const {
+    program,
+    signer,
+    venueAddress,
+    name,
+    jurisdictionWhitelist,
+    allocationCapBps,
+    riskRating,
+  } = params;
+  const yieldVenue = deriveYieldVenuePda(venueAddress);
+
+  return new Transaction().add(
+    createInstruction(program, 'add_yield_venue', {
+      allocation_cap_bps: allocationCapBps,
+      jurisdiction_whitelist: bytes32(jurisdictionWhitelist),
+      name,
+      risk_rating: riskRating,
+      venue_address: venueAddress,
+    }, [
+      { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
+      { pubkey: yieldVenue, isSigner: false, isWritable: true },
+      { pubkey: signer, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ]),
+  );
+}
+
+export async function buildAccrueYieldTx(params: {
+  program: Program<Idl>;
+  signer: PublicKey;
+  yieldAmount: BN;
+}) {
+  const { program, signer, yieldAmount } = params;
+
+  return new Transaction().add(
+    createInstruction(program, 'accrue_yield', {
+      yield_amount: amountToArg(yieldAmount),
+    }, adminUpdateKeys(signer)),
+  );
+}
+
+export async function buildRemoveYieldVenueTx(params: {
+  program: Program<Idl>;
+  signer: PublicKey;
+  venueAddress: PublicKey;
+}) {
+  const { program, signer, venueAddress } = params;
+
+  return new Transaction().add(
+    createInstruction(program, 'remove_yield_venue', {}, [
+      { pubkey: deriveVaultStatePda(), isSigner: false, isWritable: true },
+      { pubkey: deriveYieldVenuePda(venueAddress), isSigner: false, isWritable: true },
+      { pubkey: signer, isSigner: true, isWritable: true },
     ]),
   );
 }

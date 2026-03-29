@@ -66,9 +66,9 @@ const CONFIGS: Record<ClusterEnv, AppConfig> = {
     rpcUrl: 'http://127.0.0.1:8899',
     wsUrl: 'ws://127.0.0.1:8900',
     programIds: {
-      kycRegistry: 'NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD',
-      vusdVault: 'CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu',
-      complianceAdmin: 'BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K',
+      kycRegistry: 'HKAr17WzrUyXudnWb63jxpRtXSEYAFnovv3kVfSKB4ih',
+      vusdVault: '2ZrgfkWWHoverBrKXwZsUnmZMaHUFssGipng31jrnn28',
+      complianceAdmin: 'J6Z2xLJajs627cCpQQGBRqkvPEGE6YkXsx22CTwFkCaF',
     },
     commitment: 'confirmed',
   },

@@ -40,11 +40,11 @@ export default function Dashboard() {
     registryHealth,
     records,
     sharePriceHistory,
-    usingMockRecords,
     vaultState,
     yieldMetrics,
   } = useInstitutionalData();
   const { alerts } = useMonitoring();
+  const hasRecords = records.length > 0;
 
   const inflowTotal = records
     .filter((record) => record.transferType === 'Deposit')
@@ -89,49 +89,52 @@ export default function Dashboard() {
                 <p className="text-[11px] uppercase tracking-[0.24em] text-text-tertiary">Share Price History</p>
                 <CardTitle>Operator overview</CardTitle>
                 <CardDescription>
-                  Historical pricing and vault activity derived from TransferRecords.
-                  {usingMockRecords ? ' Demo fallback data is active until upstream vault records arrive.' : ''}
+                  Historical pricing and vault activity derived from live transfer records.
                 </CardDescription>
               </div>
-              <Badge variant={usingMockRecords ? 'warning' : 'success'}>
-                {usingMockRecords ? 'Demo data' : 'Live reads'}
-              </Badge>
+              <Badge variant="success">Live reads</Badge>
             </div>
           </CardHeader>
           <CardContent className="h-[320px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={sharePriceHistory}>
-                <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                <XAxis dataKey="label" stroke="#52535A" tickLine={false} axisLine={false} />
-                <YAxis
-                  stroke="#52535A"
-                  tickFormatter={(value) => `$${Number(value).toFixed(2)}`}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#12131A',
-                    border: '1px solid #1E2028',
-                    borderRadius: 12,
-                  }}
-                  formatter={(value) => [`$${Number(value ?? 0).toFixed(3)}`, 'Share price']}
-                />
-                <Area
-                  dataKey="sharePrice"
-                  stroke="#3B82F6"
-                  fill="url(#sharePriceFill)"
-                  strokeWidth={2}
-                  type="monotone"
-                />
-                <defs>
-                  <linearGradient id="sharePriceFill" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.28} />
-                    <stop offset="100%" stopColor="#3B82F6" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-              </AreaChart>
-            </ResponsiveContainer>
+            {hasRecords ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={sharePriceHistory}>
+                  <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                  <XAxis dataKey="label" stroke="#52535A" tickLine={false} axisLine={false} />
+                  <YAxis
+                    stroke="#52535A"
+                    tickFormatter={(value) => `$${Number(value).toFixed(2)}`}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#12131A',
+                      border: '1px solid #1E2028',
+                      borderRadius: 12,
+                    }}
+                    formatter={(value) => [`$${Number(value ?? 0).toFixed(3)}`, 'Share price']}
+                  />
+                  <Area
+                    dataKey="sharePrice"
+                    stroke="#3B82F6"
+                    fill="url(#sharePriceFill)"
+                    strokeWidth={2}
+                    type="monotone"
+                  />
+                  <defs>
+                    <linearGradient id="sharePriceFill" x1="0" x2="0" y1="0" y2="1">
+                      <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.28} />
+                      <stop offset="100%" stopColor="#3B82F6" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center rounded-[var(--radius)] border border-dashed border-border bg-bg-primary text-sm text-text-secondary">
+                No transactions yet.
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -190,22 +193,28 @@ export default function Dashboard() {
             <CardTitle>Inflow and outflow by period</CardTitle>
           </CardHeader>
           <CardContent className="h-[280px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sharePriceHistory}>
-                <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                <XAxis dataKey="label" stroke="#52535A" tickLine={false} axisLine={false} />
-                <YAxis stroke="#52535A" tickLine={false} axisLine={false} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#12131A',
-                    border: '1px solid #1E2028',
-                    borderRadius: 12,
-                  }}
-                />
-                <Bar dataKey="inflow" fill="#3B82F6" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="outflow" fill="#F59E0B" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {hasRecords ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={sharePriceHistory}>
+                  <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                  <XAxis dataKey="label" stroke="#52535A" tickLine={false} axisLine={false} />
+                  <YAxis stroke="#52535A" tickLine={false} axisLine={false} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#12131A',
+                      border: '1px solid #1E2028',
+                      borderRadius: 12,
+                    }}
+                  />
+                  <Bar dataKey="inflow" fill="#3B82F6" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="outflow" fill="#F59E0B" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center rounded-[var(--radius)] border border-dashed border-border bg-bg-primary text-sm text-text-secondary">
+                No transactions yet.
+              </div>
+            )}
           </CardContent>
         </Card>
 

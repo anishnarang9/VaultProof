@@ -1,6 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const port = 4173;
 const baseURL = `http://127.0.0.1:${port}`;
@@ -19,8 +23,8 @@ if (!walletSecret && existsSync(stateFile)) {
 
 // Build env vars for the Vite dev server
 const viteEnv = {
-  VITE_SOLANA_RPC_URL: process.env.VITE_SOLANA_RPC_URL ?? 'http://127.0.0.1:8899',
-  VITE_CLUSTER: process.env.VITE_CLUSTER ?? 'localnet',
+  VITE_SOLANA_RPC_URL: process.env.VITE_SOLANA_RPC_URL ?? 'https://api.devnet.solana.com',
+  VITE_CLUSTER: process.env.VITE_CLUSTER ?? 'devnet',
   ...(walletSecret ? { VITE_E2E_WALLET_SECRET: walletSecret } : {}),
 };
 

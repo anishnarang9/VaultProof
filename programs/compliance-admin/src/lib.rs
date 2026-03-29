@@ -6,7 +6,7 @@
 
 use anchor_lang::prelude::*;
 
-declare_id!("BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K");
+declare_id!("J6Z2xLJajs627cCpQQGBRqkvPEGE6YkXsx22CTwFkCaF");
 
 #[allow(dead_code)]
 fn derive_decryption_authorization_address(transfer_record: &Pubkey) -> (Pubkey, u8) {

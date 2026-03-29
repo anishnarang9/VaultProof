@@ -1,6 +1,7 @@
 import { BN, BorshAccountsCoder, type Idl } from '@coral-xyz/anchor';
 import { clusterApiUrl, Connection, PublicKey } from '@solana/web3.js';
 import {
+  createEmptyDecryptionAuthorization,
   EMPTY_PUBLIC_KEY,
   TransferType,
   createEmptyCredentialLeaf,
@@ -8,20 +9,25 @@ import {
   createEmptyStateTree,
   createEmptyTransferRecord,
   createEmptyVaultState,
+  createEmptyWhitelistedYieldVenue,
+  type DecryptionAuthorizationWithAddress,
   type CredentialLeafWithAddress,
   type KycRegistry,
   type StateTree,
   type TransferRecordWithAddress,
   type VaultProofReadClient,
   type VaultState,
+  type WhitelistedYieldVenueWithAddress,
 } from './types';
+import {
+  COMPLIANCE_ADMIN_PROGRAM_ID,
+  KYC_REGISTRY_PROGRAM_ID,
+  VUSD_VAULT_PROGRAM_ID,
+} from './program';
 
 const endpoint = import.meta.env.VITE_SOLANA_RPC_URL ?? clusterApiUrl('devnet');
 const connection = new Connection(endpoint, 'confirmed');
 const textEncoder = new TextEncoder();
-
-const VUSD_VAULT_PROGRAM_ID = new PublicKey('CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu');
-const KYC_REGISTRY_PROGRAM_ID = new PublicKey('NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD');
 
 const vaultAccountsIdl = {
   version: '0.1.0',
@@ -34,6 +40,10 @@ const vaultAccountsIdl = {
     {
       name: 'transferRecord',
       discriminator: [200, 31, 6, 158, 240, 25, 248, 53],
+    },
+    {
+      name: 'whitelistedYieldVenue',
+      discriminator: [87, 181, 72, 64, 246, 40, 37, 11],
     },
   ],
   types: [
@@ -60,6 +70,16 @@ const vaultAccountsIdl = {
           { name: 'regulatorPubkeyY', type: { array: ['u8', 32] } },
           { name: 'bump', type: 'u8' },
           { name: 'reserveBump', type: 'u8' },
+          { name: 'custodyProvider', type: 'u8' },
+          { name: 'custodyAuthority', type: 'pubkey' },
+          { name: 'paused', type: 'bool' },
+          { name: 'circuitBreakerThreshold', type: 'u64' },
+          { name: 'dailyOutflowTotal', type: 'u64' },
+          { name: 'outflowWindowStart', type: 'i64' },
+          { name: 'maxSingleTransaction', type: 'u64' },
+          { name: 'maxSingleDeposit', type: 'u64' },
+          { name: 'maxDailyTransactions', type: 'u32' },
+          { name: 'dailyTransactionCount', type: 'u32' },
         ],
       },
     },
@@ -85,6 +105,21 @@ const vaultAccountsIdl = {
       type: {
         kind: 'enum',
         variants: [{ name: 'deposit' }, { name: 'transfer' }, { name: 'withdrawal' }],
+      },
+    },
+    {
+      name: 'whitelistedYieldVenue',
+      type: {
+        kind: 'struct',
+        fields: [
+          { name: 'venueAddress', type: 'pubkey' },
+          { name: 'name', type: 'string' },
+          { name: 'jurisdictionWhitelist', type: { array: ['u8', 32] } },
+          { name: 'allocationCapBps', type: 'u16' },
+          { name: 'active', type: 'bool' },
+          { name: 'riskRating', type: 'u8' },
+          { name: 'bump', type: 'u8' },
+        ],
       },
     },
   ],
@@ -153,8 +188,35 @@ const registryAccountsIdl = {
   ],
 } as unknown as Idl;
 
+const complianceAccountsIdl = {
+  version: '0.1.0',
+  name: 'complianceAdminAccounts',
+  accounts: [
+    {
+      name: 'decryptionAuthorization',
+      discriminator: [19, 135, 57, 130, 45, 219, 165, 15],
+    },
+  ],
+  types: [
+    {
+      name: 'decryptionAuthorization',
+      type: {
+        kind: 'struct',
+        fields: [
+          { name: 'transferRecord', type: 'pubkey' },
+          { name: 'reasonHash', type: { array: ['u8', 32] } },
+          { name: 'authorizedBy', type: 'pubkey' },
+          { name: 'timestamp', type: 'i64' },
+          { name: 'bump', type: 'u8' },
+        ],
+      },
+    },
+  ],
+} as unknown as Idl;
+
 const vaultCoder = new BorshAccountsCoder(vaultAccountsIdl);
 const registryCoder = new BorshAccountsCoder(registryAccountsIdl);
+const complianceCoder = new BorshAccountsCoder(complianceAccountsIdl);
 
 function bytesEqual(left: Uint8Array, right: Uint8Array) {
   if (left.length !== right.length) {
@@ -229,6 +291,51 @@ function toBytes(value: unknown, width = 32): number[] {
   return Array.from({ length: width }, () => 0);
 }
 
+function normalizeCustodyProvider(value: unknown): VaultState['custodyProvider'] {
+  if (typeof value === 'number') {
+    switch (value) {
+      case 1:
+        return 'Fireblocks';
+      case 2:
+        return 'BitGo';
+      case 3:
+        return 'Anchorage';
+      default:
+        return 'SelfCustody';
+    }
+  }
+
+  if (typeof value === 'string' && value.length > 0) {
+    switch (value.toLowerCase()) {
+      case 'fireblocks':
+        return 'Fireblocks';
+      case 'bitgo':
+        return 'BitGo';
+      case 'anchorage':
+        return 'Anchorage';
+      default:
+        return 'SelfCustody';
+    }
+  }
+
+  if (value && typeof value === 'object') {
+    const variant = Object.keys(value as Record<string, unknown>)[0]?.toLowerCase();
+
+    switch (variant) {
+      case 'fireblocks':
+        return 'Fireblocks';
+      case 'bitgo':
+        return 'BitGo';
+      case 'anchorage':
+        return 'Anchorage';
+      default:
+        return 'SelfCustody';
+    }
+  }
+
+  return 'SelfCustody';
+}
+
 function normalizeTransferType(value: unknown) {
   if (typeof value === 'string') {
     switch (value.toLowerCase()) {
@@ -300,17 +407,10 @@ async function fetchAllAccounts<T>(
 }
 
 function normalizeVaultState(raw: Record<string, unknown>): VaultState {
-  const normalizedCustodyProvider =
-    typeof raw.custodyProvider === 'string'
-      ? raw.custodyProvider
-      : raw.custodyProvider && typeof raw.custodyProvider === 'object'
-        ? Object.keys(raw.custodyProvider as Record<string, unknown>)[0]
-        : 'SelfCustody';
-
   return createEmptyVaultState({
     authority: toPublicKey(raw.authority),
     custodyAuthority: toPublicKey(raw.custodyAuthority),
-    custodyProvider: normalizedCustodyProvider as VaultState['custodyProvider'],
+    custodyProvider: normalizeCustodyProvider(raw.custodyProvider),
     usdcMint: toPublicKey(raw.usdcMint),
     shareMint: toPublicKey(raw.shareMint),
     usdcReserve: toPublicKey(raw.usdcReserve),
@@ -396,6 +496,34 @@ function normalizeCredentialLeaf(raw: Record<string, unknown>): CredentialLeafWi
   });
 }
 
+function normalizeWhitelistedYieldVenue(
+  raw: Record<string, unknown>,
+): WhitelistedYieldVenueWithAddress {
+  return createEmptyWhitelistedYieldVenue({
+    address: toPublicKey(raw.address),
+    venueAddress: toPublicKey(raw.venueAddress),
+    name: typeof raw.name === 'string' ? raw.name : '',
+    jurisdictionWhitelist: toBytes(raw.jurisdictionWhitelist),
+    allocationCapBps: Number(raw.allocationCapBps ?? 0),
+    active: Boolean(raw.active),
+    riskRating: Number(raw.riskRating ?? 0),
+    bump: Number(raw.bump ?? 0),
+  });
+}
+
+function normalizeDecryptionAuthorization(
+  raw: Record<string, unknown>,
+): DecryptionAuthorizationWithAddress {
+  return createEmptyDecryptionAuthorization({
+    address: toPublicKey(raw.address),
+    transferRecord: toPublicKey(raw.transferRecord),
+    reasonHash: toBytes(raw.reasonHash),
+    authorizedBy: toPublicKey(raw.authorizedBy),
+    timestamp: toBN(raw.timestamp),
+    bump: Number(raw.bump ?? 0),
+  });
+}
+
 export const defaultReadClient: VaultProofReadClient = {
   async fetchVaultState() {
     try {
@@ -469,6 +597,38 @@ export const defaultReadClient: VaultProofReadClient = {
 
       return leaves.map(({ address, account }) =>
         normalizeCredentialLeaf({ ...account, address }),
+      );
+    } catch {
+      return [];
+    }
+  },
+
+  async fetchYieldVenues() {
+    try {
+      const venues = await fetchAllAccounts<Record<string, unknown>>(
+        VUSD_VAULT_PROGRAM_ID,
+        vaultCoder,
+        'whitelistedYieldVenue',
+      );
+
+      return venues.map(({ address, account }) =>
+        normalizeWhitelistedYieldVenue({ ...account, address }),
+      );
+    } catch {
+      return [];
+    }
+  },
+
+  async fetchDecryptionAuthorizations() {
+    try {
+      const authorizations = await fetchAllAccounts<Record<string, unknown>>(
+        COMPLIANCE_ADMIN_PROGRAM_ID,
+        complianceCoder,
+        'decryptionAuthorization',
+      );
+
+      return authorizations.map(({ address, account }) =>
+        normalizeDecryptionAuthorization({ ...account, address }),
       );
     } catch {
       return [];

@@ -6,13 +6,20 @@ import { PublicKey } from '@solana/web3.js';
 import ComplianceDetail from '../pages/ComplianceDetail';
 import Credential from '../pages/Credential';
 import Deposit from '../pages/Deposit';
+import OperatorGovernance from '../pages/OperatorGovernance';
+import OperatorRisk from '../pages/OperatorRisk';
+import OperatorYield from '../pages/OperatorYield';
 import { createEmptyVaultState } from '../lib/types';
 
 const mockState = vi.hoisted(() => ({
   authorityBytes: Array.from({ length: 32 }, () => 6),
   buildAddCredentialTx: vi.fn(async () => ({ instructions: [] })),
+  buildAddYieldVenueTx: vi.fn(async () => ({ instructions: [] })),
+  buildAccrueYieldTx: vi.fn(async () => ({ instructions: [] })),
   buildAuthorizeDecryptionTx: vi.fn(async () => ({ instructions: [] })),
   buildDepositTx: vi.fn(async () => ({ instructions: [] })),
+  buildUnpauseVaultTx: vi.fn(async () => ({ instructions: [] })),
+  buildUpdateRiskLimitsTx: vi.fn(async () => ({ instructions: [] })),
   clearCredential: vi.fn(),
   connection: {
     confirmTransaction: vi.fn(async () => ({ value: { err: null } })),
@@ -53,8 +60,10 @@ const mockState = vi.hoisted(() => ({
   refreshRegistry: vi.fn(async () => {}),
   refreshTransfers: vi.fn(async () => {}),
   refreshVault: vi.fn(async () => {}),
+  refreshInstitutionalData: vi.fn(async () => {}),
   saveCredential: vi.fn(),
   sendTransaction: vi.fn(async () => '5ignature111111111111111111111111111111111111'),
+  walletConnected: true,
 }));
 
 function authorityKey() {
@@ -80,15 +89,18 @@ function baseCredential() {
 }
 
 vi.mock('@solana/wallet-adapter-react', () => ({
-  useAnchorWallet: () => ({
-    publicKey: authorityKey(),
-    signAllTransactions: vi.fn(async (transactions) => transactions),
-    signTransaction: vi.fn(async (transaction) => transaction),
-  }),
+  useAnchorWallet: () =>
+    mockState.walletConnected
+      ? {
+          publicKey: authorityKey(),
+          signAllTransactions: vi.fn(async (transactions) => transactions),
+          signTransaction: vi.fn(async (transaction) => transaction),
+        }
+      : null,
   useConnection: () => ({ connection: mockState.connection }),
   useWallet: () => ({
-    publicKey: authorityKey(),
-    sendTransaction: mockState.sendTransaction,
+    publicKey: mockState.walletConnected ? authorityKey() : null,
+    sendTransaction: mockState.walletConnected ? mockState.sendTransaction : undefined,
   }),
 }));
 
@@ -151,6 +163,19 @@ vi.mock('../hooks/useProofGeneration', () => ({
 
 vi.mock('../hooks/useInstitutionalData', () => ({
   useInstitutionalData: () => ({
+    decryptionAuthorizations: [
+      {
+        address: new PublicKey(new Uint8Array(32).fill(21)),
+        authorizedBy: authorityKey(),
+        bump: 1,
+        reasonHash: Array.from({ length: 32 }, (_, index) => index + 2),
+        timestamp: new BN(1_742_000_100),
+        transferRecord: new PublicKey(new Uint8Array(32).fill(13)),
+      },
+    ],
+    governanceMembers: [authorityKey().toBase58()],
+    governanceProposals: [],
+    isLoading: false,
     records: [
       {
         address: new PublicKey(new Uint8Array(32).fill(13)),
@@ -164,6 +189,53 @@ vi.mock('../hooks/useInstitutionalData', () => ({
         transferType: 'Transfer',
       },
     ],
+    refresh: mockState.refreshInstitutionalData,
+    usingMockRecords: false,
+    vaultState: {
+      data: {
+        ...createEmptyVaultState({
+          authority: authorityKey(),
+          paused: true,
+          shareMint: authorityKey(),
+          totalAssets: new BN(500_000),
+          totalYieldEarned: new BN(25_000),
+          yieldSource: new PublicKey(new Uint8Array(32).fill(17)),
+        }),
+        circuitBreakerUsage: 0.42,
+        liquidBufferRatio: 0.2,
+        regulatorKey: {
+          x: Array.from({ length: 32 }, () => 7),
+          y: Array.from({ length: 32 }, () => 8),
+        },
+        sharePrice: 1.15,
+        thresholds: {
+          retail: new BN(10_000),
+          accredited: new BN(100_000),
+          institutional: new BN(1_000_000),
+          expired: new BN(1_000),
+        },
+      },
+      refresh: mockState.refreshVault,
+    },
+    yieldMetrics: {
+      currentVenue: 'Kamino Prime',
+      liquidBufferUsd: 400000,
+      yieldRate: 5,
+      yieldVenues: [
+        {
+          accountAddress: new PublicKey(new Uint8Array(32).fill(16)),
+          active: true,
+          allocationCapBps: 2500,
+          connected: true,
+          currentAllocationUsd: 125000,
+          id: new PublicKey(new Uint8Array(32).fill(16)).toBase58(),
+          jurisdiction: 'United States',
+          name: 'Kamino Prime',
+          riskRating: 'Low',
+          venueAddress: new PublicKey(new Uint8Array(32).fill(17)).toBase58(),
+        },
+      ],
+    },
   }),
 }));
 
@@ -172,8 +244,12 @@ vi.mock('../lib/program', async () => {
   return {
     ...actual,
     buildAddCredentialTx: mockState.buildAddCredentialTx,
+    buildAddYieldVenueTx: mockState.buildAddYieldVenueTx,
+    buildAccrueYieldTx: mockState.buildAccrueYieldTx,
     buildAuthorizeDecryptionTx: mockState.buildAuthorizeDecryptionTx,
     buildDepositTx: mockState.buildDepositTx,
+    buildUnpauseVaultTx: mockState.buildUnpauseVaultTx,
+    buildUpdateRiskLimitsTx: mockState.buildUpdateRiskLimitsTx,
     getPrograms: mockState.getPrograms,
     proofToOnchainFormat: mockState.proofToOnchainFormat,
   };
@@ -192,6 +268,7 @@ describe('frontend transaction pages', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockState.credential = baseCredential();
+    mockState.walletConnected = true;
   });
 
   it('credential issuance validates source of funds as a required field', async () => {
@@ -236,5 +313,60 @@ describe('frontend transaction pages', () => {
 
     await waitFor(() => expect(mockState.buildAuthorizeDecryptionTx).toHaveBeenCalled());
     await waitFor(() => expect(mockState.sendTransaction).toHaveBeenCalled());
+  });
+
+  it('operator risk submits a live risk-limit update', async () => {
+    const user = userEvent.setup();
+    render(<OperatorRisk />);
+
+    await user.clear(screen.getByLabelText(/circuit breaker threshold/i));
+    await user.type(screen.getByLabelText(/circuit breaker threshold/i), '600000');
+    await user.click(screen.getByRole('button', { name: /update risk limits/i }));
+
+    await waitFor(() => expect(mockState.buildUpdateRiskLimitsTx).toHaveBeenCalled());
+    await waitFor(() => expect(mockState.sendTransaction).toHaveBeenCalled());
+    expect(mockState.refreshVault).toHaveBeenCalled();
+  });
+
+  it('operator yield submits venue creation and yield accrual transactions', async () => {
+    const user = userEvent.setup();
+    render(<OperatorYield />);
+
+    await user.type(screen.getByLabelText(/venue address/i), new PublicKey(new Uint8Array(32).fill(18)).toBase58());
+    await user.type(screen.getByLabelText(/venue name/i), 'Maple Prime');
+    await user.type(screen.getByLabelText(/jurisdiction/i), 'United States');
+    await user.clear(screen.getByLabelText(/allocation cap/i));
+    await user.type(screen.getByLabelText(/allocation cap/i), '1800');
+    await user.click(screen.getByRole('button', { name: /add venue/i }));
+
+    await waitFor(() => expect(mockState.buildAddYieldVenueTx).toHaveBeenCalled());
+    await waitFor(() => expect(mockState.sendTransaction).toHaveBeenCalled());
+
+    await user.clear(screen.getByLabelText(/yield amount/i));
+    await user.type(screen.getByLabelText(/yield amount/i), '5000');
+    await user.click(screen.getByRole('button', { name: /accrue yield/i }));
+
+    await waitFor(() => expect(mockState.buildAccrueYieldTx).toHaveBeenCalled());
+    expect(mockState.refreshInstitutionalData).toHaveBeenCalled();
+  });
+
+  it('operator governance authorizes transfer-record decryption', async () => {
+    const user = userEvent.setup();
+    render(<OperatorGovernance />);
+
+    await user.click(screen.getByRole('button', { name: /authorize decryption/i }));
+
+    await waitFor(() => expect(mockState.buildAuthorizeDecryptionTx).toHaveBeenCalled());
+    await waitFor(() => expect(mockState.sendTransaction).toHaveBeenCalled());
+    expect(mockState.refreshInstitutionalData).toHaveBeenCalled();
+  });
+
+  it('operator pages block actions until a wallet is connected', async () => {
+    mockState.walletConnected = false;
+    render(<OperatorRisk />);
+
+    expect(screen.getAllByText(/connect wallet to manage vault/i)).not.toHaveLength(0);
+    expect(screen.getByRole('button', { name: /update risk limits/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /unpause vault/i })).toBeDisabled();
   });
 });

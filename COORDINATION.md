@@ -298,7 +298,8 @@ Entries:
   - updated `Anchor.toml`, `README.md`, `docs/adr-001` through `docs/adr-006`, `docs/production-roadmap.md`, and `PRODUCTION_CHECKLIST.md` to reflect the actual PDA-backed registry model, browser proof flow, and devnet status
   - removed the frontend chunk warning by setting `build.chunkSizeWarningLimit` in `app/vite.config.ts`
   - devnet execution:
-    - confirmed committed deploy keypair addresses: `kyc_registry`=`NsgKr1qCEUb1vXdwaGvbz3ygG4R4SCrUQm3T8tHoqgD`, `vusd_vault`=`CUxwkHjKjGyKa5H1qEQySw98yKn33RZFxc9TbVgU6rdu`, `compliance_admin`=`BsEMZCJzj3SqwSj6z2F3X8m9rFHjLubgBzMeSgj8Lp6K`
+    - confirmed committed deploy keypair addresses: `kyc_registry`=`HKAr17WzrUyXudnWb63jxpRtXSEYAFnovv3kVfSKB4ih`, `vusd_vault`=`2ZrgfkWWHoverBrKXwZsUnmZMaHUFssGipng31jrnn28`, `compliance_admin`=`J6Z2xLJajs627cCpQQGBRqkvPEGE6YkXsx22CTwFkCaF`
+    - devnet/demo authority note: direct wallet authority is used for bootstrap speed; Squads multisig remains the intended future/production authority model
     - deployed `kyc_registry` and `compliance_admin` to devnet successfully
     - initialized the devnet registry and added a test credential via `scripts/create-devnet-credentials.sh`
     - `vusd_vault` deployment remains blocked by devnet SOL funding limits during `solana program deploy`
